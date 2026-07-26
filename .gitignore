@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/
+.vitest/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Python (tool runtimes / shims)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# C++ (tool runtimes)
+*.o
+*.obj
+*.exe
+cmake-build-*/
+CMakeCache.txt
+
+# Proto codegen (generated, not hand-written)
+**/gen/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Misc
+.cache/
+tmp/
