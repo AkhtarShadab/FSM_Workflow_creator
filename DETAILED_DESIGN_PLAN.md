@@ -92,19 +92,20 @@ in which:
 |-----------|------|----------------|
 | **Web App (Creator UI)** | Next.js 15 (App Router), React Flow, Zustand, Tailwind, Framer Motion, Magic UI | Canvas authoring, inspector, copilot chat, run monitor, export triggers |
 | **Platform API** | Next.js route handlers (tRPC proposed — see Q1) | CRUD for projects/FSMs, run orchestration, BYOK proxy, export jobs |
-| **Platform DB** | SQLite via Prisma (dev) → Postgres-compatible schema (prod path) | Projects, FSM definitions, credentials (encrypted), run history |
+| **Platform DB** | Turso (libSQL) via Drizzle ORM — edge-distributed SQLite, no separate prod DB upgrade needed | Projects, FSM definitions, credentials (encrypted), run history |
 | **FSM Engine** | Node.js (TypeScript), framework-free core package | Signal parsing, transition execution, guardrails, retries, subagent orchestration |
 | **gRPC Bridge** | `nice-grpc` or `@grpc/grpc-js` + **buf** for proto toolchain | Typed invocation of native tools, streaming tool logs |
 | **Tool Runtimes** | Python (`grpcio`), C++ (gRPC C++), Bash (via Python shim — see §8.4) | Execute deterministic work in containers |
 | **BYOK Gateway** | Node adapter layer (OpenAI SDK, Anthropic SDK, generic OpenAI-compatible) | Model discovery, chat completion proxy, token accounting |
 | **Checkpoint Store (harness-side)** | Adapter interface: Redis (default) / MongoDB / SQL | Dehydrated context, run checkpoints, subagent results |
+| **Memory Graph Store** | Turso tables (`memory_nodes` + `memory_edges`) | Long-term, graph-organized memory: facts, artifacts, preferences, checkpoint refs — browsable as a graph in the UI |
 | **Export Engine** | Template-based codegen (ETA/Handlebars) | Emits harness ZIP / git repo: Dockerfile, compose, proto, fsm.json, tool stubs |
 
 ### 3.2 Deployment view
 
 ```
 ┌──────────────────────────── PLATFORM (creator) ───────────────────────────┐
-│  Next.js app  ──►  Platform API  ──►  SQLite (Prisma)                     │
+│  Next.js app  ──►  Platform API  ──►  Turso (libSQL)                     │
 │       │                 │                                                 │
 │       │                 └──► Export Engine ──► ZIP / git push             │
 └──────────────────────────────────────┬────────────────────────────────────┘
@@ -125,7 +126,7 @@ in which:
 |---|----------|----------|-------------|-----------|
 | D1 | Monorepo tooling | **pnpm workspaces + Turborepo** | npm workspaces | Fast CI caching, mature filtering |
 | D2 | Platform API style | **tRPC** (TS end-to-end) | REST/OpenAPI | Type safety canvas↔API; harness runtime uses gRPC anyway |
-| D3 | ORM | **Prisma** | Kysely | Migrations + codegen; SQLite→Postgres portability |
+| D3 | ORM | **Drizzle ORM** (with Turso/libSQL adapter) | Prisma | Turso is built on libSQL (SQLite fork). Drizzle has first-class Turso support, edge-ready HTTP queries, and fully typed schemas — no separate production DB upgrade needed. Prisma has only experimental libSQL support. |
 | D4 | Engine impl | **Custom signal-driven engine** | XState | Signal grammar + dynamic subagent spawning don't map cleanly to XState's actor model; keep core dependency-free |
 | D5 | Proto toolchain | **buf** (lint, breaking, codegen) | raw protoc | CI-enforceable schema evolution |
 | D6 | Bash tools | **Python gRPC shim that execs bash** | "bash gRPC server" | There is no sane native bash gRPC server; one shim serves all bash tools |
@@ -142,7 +143,7 @@ FSM_Workflow_creator/
 │       ├── app/                  # App Router pages
 │       ├── components/           # canvas/, inspector/, copilot/, ui/ (Magic UI)
 │       ├── server/               # tRPC routers, services
-│       └── prisma/               # schema.prisma, migrations
+│       └── db/                   # Drizzle schema & migrations (Turso/libSQL)
 ├── packages/
 │   ├── fsm-engine/               # ⭐ pure TS, zero Next deps — also ships in harnesses
 │   │   ├── src/parser/           # signal grammar parser
@@ -174,7 +175,13 @@ the exported harness. Enforce via ESLint `no-restricted-imports` + a CI architec
 
 ## 5. Data Models & FSM Definition DSL
 
-### 5.1 Platform DB (Prisma, SQLite)
+### 5.1 Platform DB (Turso via Drizzle ORM)
+
+**Why Turso?** [Turso](https://docs.turso.tech/introduction) is built on libSQL (an open-source fork
+of SQLite) and adds edge replication, HTTP-based remote queries, and a generous free tier.
+It works identically to SQLite for local development (`turso dev` / embedded mode) but scales
+to a distributed edge database in production — no schema migration, no separate Postgres upgrade.
+Drizzle ORM has [first-class Turso support](https://orm.drizzle.team/docs/quick-sqlite/turso).
 
 ```
 Project        id, name, createdAt, updatedAt
@@ -183,10 +190,40 @@ Credential     id, projectId, provider, baseUrl, encryptedKey, label, createdAt
 Run            id, fsmId →FsmDefinition, status, startedAt, endedAt, tokenUsageJson
 RunEvent       id, runId →Run, stateId, kind, payloadJson, tokensIn, tokensOut, latencyMs, ts
 ExportJob      id, fsmId, target (zip|git), status, artifactUrl, createdAt
+MemoryNode     id, projectId →Project (nullable), kind (fact|artifact|preference|checkpoint_ref),
+               label, content, createdAt
+MemoryEdge     id, projectId, sourceId →MemoryNode, targetId →MemoryNode, relation, createdAt
 ```
+
+Memory is **graph-organized** (§5.3): nodes are discrete memory units, edges are typed
+relations (`derived_from`, `prefers`, `summarizes`, `references`). Global memories have
+`projectId = NULL`; project-scoped memories cascade-delete with their project.
+
+Schema is defined via **Drizzle Kit** (`drizzle-kit`). Migrations are SQL files committed
+to version control. The same schema runs in local dev mode (`turso dev` → embedded SQLite)
+and against remote Turso databases (HTTP protocol, no driver needed).
 
 Harness-side persistence (Redis/Mongo/SQL) is intentionally separate and selected at
 export time; only **adapters** live in `packages/fsm-engine/src/context/store/`.
+
+### 5.3 Memory Layer (graph-based)
+
+The platform keeps a **long-term memory graph** alongside the run-scoped checkpoint
+store. Checkpoints are ephemeral (TTL); memory is durable and queryable.
+
+| Aspect | Design |
+|--------|--------|
+| Storage | `memory_nodes` + `memory_edges` in Turso — same DB as the platform, zero new infra |
+| Node kinds | `fact` (learned truth), `artifact` (output ref), `preference` (user/BYOK prefs), `checkpoint_ref` (pointer into checkpoint store) |
+| Edge relations | `derived_from`, `summarizes`, `prefers`, `references` (typed, directed) |
+| Writers | System Functions (post-dehydration summaries → `summarizes` edges), Audit analyzer (§6.5), manual UI entries |
+| Readers | State 0 hydration pulls the project's top-N memory nodes (by recency/degree) into the phase map; System Functions re-hydrate relevant subgraphs |
+| UI | `/memory` — graph view (sticky-note nodes + pencil edges, same visual language as the canvas); the landing **integrations bento** (Workflow · Memory · Calendar · Notifications) links here |
+| Export | Memory tables are platform-side; exported harnesses get a read-only memory snapshot as `memory.json` (v2, see Q29) |
+
+Why graph-based: FSM states produce/consume knowledge with many-to-many structure —
+flat lists don't capture `derived_from` chains, and a graph view reuses the canvas
+visual system we already built (zero new rendering stack).
 
 ### 5.2 FSM Definition DSL (JSON, versioned)
 
@@ -441,17 +478,27 @@ interface ProviderAdapter {
 ### 10.1 App Router map
 
 ```
-/                     → project list
-/project/[id]         → canvas (React Flow) + inspector + copilot
-/project/[id]/runs    → run history & live monitor
-/project/[id]/export  → export wizard (language, store, target)
-/settings/credentials → BYOK management
+/                           → landing: templates bento (Workflow · Memory · Calendar · Notifications) + project table
+/project/[id]               → project dashboard: bento setup grid (Canvas · Runs · Export · Memory)
+/project/[id]/canvas        → canvas (React Flow) + inspector + copilot + Describe panel
+/project/[id]/runs          → run history & live monitor
+/project/[id]/export        → export wizard (language, store, target)
+/memory                     → memory graph view (§5.3) with add-node / add-edge forms
+/settings/credentials       → BYOK management
 ```
 
 ### 10.2 Canvas (per draft §5.1) — implementation notes
 
-- Custom node `StateCircleNode` (100×100 `MagicCard`, glow hover, pulsing START).
-- Custom edges `ScriptEdge` (solid, strokeWidth 4, neon blue) / `AIEdge` (dashed 8 8, neon purple).
+- Custom node `StickyNoteNode` (pastel sticky note, washi tape, hand-written label,
+  slight tilt that straightens on hover, dashed pencil selection outline).
+- Custom edges with **directional arrow markers** (`MarkerType.ArrowClosed`) drawn as
+  pencil strokes: `ScriptEdge` (bold solid) / `AIEdge` (dashed) / `SystemEdge` (dotted)
+  / `SpawnEdge` (dash-dot); every edge carries a traveling beam dot (`animateMotion`)
+  seeded per edge so beams desync.
+- Clicking an edge opens the **edge inspector**: swap among §6.1 signal presets,
+  enter custom `::MYAPP.*` signals (Q5), or delete the wire — style follows the
+  signal namespace automatically. A toolbar "new wires" picker pre-selects the
+  signal for the next connections.
 - Live runs: `AnimatedBeam` driven by run events over SSE — the canvas doubles as the run monitor.
 - Zustand stores: `useCanvasStore` (nodes/edges/selection), `useRunStore` (live events),
   `useCredentialStore`. React Flow state is the source of truth; FSM DSL is derived
@@ -459,9 +506,13 @@ interface ProviderAdapter {
 
 ### 10.3 Inspector (Bento Grid, per draft §5.2)
 
-Card 1 script editor (CodeMirror 6, C++/Python/Bash modes), Card 2 generative config
-(model dropdown fed by BYOK discovery, temperature, max tokens, output schema editor),
-Card 3 guardrails (timeout, retries, JSON schema, `Meteors` effect on error state).
+Card 1 script editor (CodeMirror 6, C++/Python/Bash modes, `BorderBeam`) with a
+**custom script template library**: built-in skeletons per language plus user-saved
+templates (save current script, load into any SCRIPT node, delete custom ones —
+client-persisted now, `ScriptTemplate` table + team sharing is Q30). Card 2 generative
+config (model dropdown fed by BYOK discovery, temperature, max tokens, output schema
+editor), Card 3 guardrails (timeout, retries, JSON schema, `Meteors` effect on error
+state).
 
 ### 10.4 AI Copilot mode
 
@@ -515,7 +566,7 @@ harness-<name>-v<semver>/
 | Contract | Vitest + buf fixtures | proto golden messages, `ToolResponse` signal conformance per language shim | all messages |
 | Integration | Vitest (+ **testcontainers** for Redis/store) | engine run loop end-to-end with mocked LLM + real shim; checkpoint dehydrate/hydrate; subagent aggregation | all state types |
 | E2E | **Playwright** | authoring→save→reload, BYOK validation, copilot applies ops, export job, live-run beam animation | core flows |
-| Static | ESLint, `tsc --noEmit`, `buf lint`, Prisma validate, architecture boundary check | whole repo | blocking |
+| Static | ESLint, `tsc --noEmit`, `buf lint`, Drizzle schema check (`drizzle-kit check`), architecture boundary check | whole repo | blocking |
 
 ### 12.2 Directory layout & config
 
@@ -787,7 +838,7 @@ jobs:
 | Keys in logs | redaction filter on all RunEvent serialization |
 | Tool sandboxing | per-language container, no host mounts, CPU/mem limits in compose, no network egress except allowlist (Q19) |
 | Exported harness secrets | `.env` never committed; `.env.example` only; git-target auth via deploy keys |
-| Web input | all DSL edits Zod-validated; Prisma parameterized queries |
+| Web input | all DSL edits Zod-validated; Drizzle parameterized queries (Turso/libSQL) |
 | Supply chain | `pnpm audit` in CI; lockfile frozen; Dependabot on |
 
 ---
@@ -808,9 +859,9 @@ jobs:
 |-------|--------------------------|--------------------------|
 | **0. Scaffold & de-risk** | Monorepo + CI + Vitest/Playwright harness + spikes (§17) | CI green on empty scaffold; spike reports closed |
 | **1. Canvas foundation** | Next.js, React Flow, custom nodes/edges, Zustand, Magic UI bg | Component tests green; E2E: add node → connect → reload persists (localStorage stub) |
-| **2. Inspector + persistence** | Bento inspector, Prisma/SQLite, tRPC CRUD, `canvasToDsl` | DSL round-trip unit tests; E2E: edit prompt → save → reload shows value |
+| **2. Inspector + persistence** | Bento inspector, Turso/libSQL via Drizzle ORM, tRPC CRUD, `canvasToDsl` | DSL round-trip unit tests; E2E: edit prompt → save → reload shows value |
 | **3. Engine + gRPC + BYOK** | Signal parser, run loop, gRPC bridge + Python shim, model discovery | Golden trace suite green; contract suite vs shim green; mock-LLM discovery E2E |
-| **4. Token optimization + subagents** | State 0, System Functions, SPAWN/AGGREGATE | Token-budget invariant test green; subagent aggregation integration test green |
+| **4. Token optimization + subagents** | State 0, System Functions, SPAWN/AGGREGATE, memory-graph hydration | Token-budget invariant test green; subagent aggregation integration test green; memory nodes appear in State-0 phase map |
 | **5. Copilot + export** | Copilot tool-calling loop, export pipeline (ZIP/git) | Deterministic copilot E2E green; exported harness `docker compose up` smoke test in CI |
 
 ---
@@ -846,6 +897,24 @@ Grouped; each tagged with where it blocks.
 - **Q3.** Harness versioning: semver per export + git tags, or immutable content-hash only?
 - **Q4.** Meta-cognitive rewrites: proposals-only (proposed) or auto-apply under a
   confidence threshold? Auto-apply needs a rollback UX. *Blocks: §6.5.*
+
+### Platform & database (Turso)
+- **Q26.** Turso deployment model: local embedded mode (`turso dev`) for dev, remote
+  Turso DB in production — confirm. Need to decide on DB location strategy (embedded
+  in the Next.js process vs. sidecar Turso CLI process vs. remote HTTP-only).
+  *Blocks: Phase 2 (DB setup).*
+- **Q27.** Migration strategy: Drizzle Kit push during dev, committed SQL migrations
+  in CI. Confirm no need for a separate seed/fixture mechanism beyond Drizzle's
+  built-in `drizzle-kit seed`? *Blocks: Phase 2 (CI pipeline).*
+- **Q28.** Turso business tier / scaling: the free tier ([libsql] 500 DBs, 9 GB
+  total storage) should cover dev + early users. When is the paid tier trigger?
+  *Info needed for: §3.1 (component sizing).*
+- **Q29.** Memory layer scope: are memory graphs per-project only, or is there a
+  global/shared org memory? Should exported harnesses receive a memory snapshot
+  (`memory.json`) or stay memory-less? *Blocks: §5.3 export story.*
+- **Q30.** Script template library: client-local (current) or a `ScriptTemplate`
+  table with per-project/team sharing and versioning? Should templates be part of
+  the exported harness bundle? *Blocks: §11 export story.*
 
 ### FSM engine
 - **Q5.** Custom user signals (`::MYAPP.*`) — allowed? Namespacing/collision rules?
