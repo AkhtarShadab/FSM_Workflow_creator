@@ -17,6 +17,7 @@ see the roadmap in the detailed design plan.
 |-----|----------|
 | [InitialDraftPlan.md](InitialDraftPlan.md) | Original concept: FSM engine, signal transitions, token optimization, Magic UI canvas, roadmap |
 | [DETAILED_DESIGN_PLAN.md](DETAILED_DESIGN_PLAN.md) | Implementation-grade design: architecture decisions, monorepo layout, FSM DSL, signal grammar, gRPC/proto contracts, BYOK gateway, **testing strategy (Vitest + Playwright)**, **CI pipeline**, open questions, and de-risking next steps |
+| [FeatureShipping/](FeatureShipping/) | Per-feature design deltas (canvas, memory/code index, …). Workflow: **detail-feature** (high-end) → **ship-feature** (Composer/Grok) → **test-feature** (Composer/Grok) |
 
 ## Highlights
 

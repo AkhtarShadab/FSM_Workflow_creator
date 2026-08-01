@@ -16,6 +16,7 @@ import {
   ScriptEditorCard,
   SpawnCard,
   SystemFunctionCard,
+  VerifiabilityCard,
 } from "./inspector-cards";
 
 const EMPTY_NODES: import("@/lib/fsm-types").StateNode[] = [];
@@ -110,7 +111,10 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
                   <SystemFunctionCard node={node} patch={patch} />
                 )}
                 {["SCRIPT", "AI", "SPAWN"].includes(node.data.stateType) && (
-                  <GuardrailsCard node={node} patch={patch} />
+                  <>
+                    <VerifiabilityCard node={node} patch={patch} />
+                    <GuardrailsCard node={node} patch={patch} />
+                  </>
                 )}
 
                 {outgoing.length > 0 && (

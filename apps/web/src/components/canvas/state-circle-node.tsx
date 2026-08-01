@@ -12,7 +12,12 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { STATE_COLORS, type StateNode } from "@/lib/fsm-types";
+import {
+  normalizeSpawn,
+  primaryProfile,
+  STATE_COLORS,
+  type StateNode,
+} from "@/lib/fsm-types";
 
 const STATE_ICONS = {
   START: Play,
@@ -94,6 +99,10 @@ export const StateCircleNode = memo(function StateCircleNode({
         </p>
       )}
 
+      {data.stateType === "SPAWN" && (
+        <SpawnChips data={data} textClass={colors.text} />
+      )}
+
       <Handle
         type="source"
         position={Position.Right}
@@ -102,3 +111,27 @@ export const StateCircleNode = memo(function StateCircleNode({
     </div>
   );
 });
+
+function SpawnChips({
+  data,
+  textClass,
+}: {
+  data: StateNode["data"];
+  textClass: string;
+}) {
+  const spawn = normalizeSpawn(data.spawn);
+  const profile = primaryProfile(spawn);
+  return (
+    <div className={cn("mt-1.5 flex flex-wrap gap-1", textClass)}>
+      <span className="rounded-[2px] border border-current/25 bg-black/5 px-1 py-0.5 text-[8px] font-bold tracking-wide uppercase opacity-80">
+        {spawn.count}w · max {spawn.maxConcurrency}
+      </span>
+      <span className="rounded-[2px] border border-current/25 bg-black/5 px-1 py-0.5 text-[8px] font-bold tracking-wide uppercase opacity-80">
+        {profile.toolPack.length} tools
+      </span>
+      <span className="rounded-[2px] border border-current/25 bg-black/5 px-1 py-0.5 text-[8px] font-bold tracking-wide uppercase opacity-80">
+        {profile.skillPack.length} skills
+      </span>
+    </div>
+  );
+}
