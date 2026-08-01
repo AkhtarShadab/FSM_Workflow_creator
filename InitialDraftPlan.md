@@ -88,7 +88,7 @@ Hydration: The context window is wiped and re-populated with a concise summary p
    4.1 Platform vs. Compiled Harness Runtime
    Component Platform (Creator) Generated Harness (Output)
    Primary Environment Node.js in Docker Containerized Docker Application
-   Internal Database SQLite (Lightweight, embedded) User-selected (Redis, MongoDB, or SQL)
+   Internal Database Turso (Edge-distributed SQLite via libSQL) User-selected (Redis, MongoDB, or SQL)
    Tool Execution Web-based editor & previewer Native C++, Python, or Bash binaries
    Distribution Web Application UI Downloadable ZIP or Direct Git Commit
    4.2 Inter-Container Communication (gRPC)
@@ -176,7 +176,7 @@ Integrate Magic UI AnimatedGridPattern and canvas panning/zooming controls.
 Phase 2: Bento Grid Inspector & Local Persistence
 Build the slide-out Bento Grid inspector panel.
 
-Set up SQLite database via Prisma/Kysely to persist harness canvas configurations locally.
+Set up Turso database via Drizzle ORM (libSQL client) to persist harness canvas configurations locally and remotely.
 
 Implement state variable editing (prompts, tool code, guardrails).
 
