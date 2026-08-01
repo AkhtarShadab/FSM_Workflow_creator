@@ -21,6 +21,7 @@ export interface ScriptConfig {
 
 /** Card 2 — generative instructions config (§10.3) */
 export interface AIConfig {
+  credentialId: string;
   model: string;
   temperature: number;
   maxTokens: number;
@@ -35,14 +36,48 @@ export interface GuardrailConfig {
   retryBackoffMs: number;
 }
 
-export interface SpawnConfig {
+export type AggregationStrategy = "waitAll" | "quorum" | "firstSuccess";
+
+/** Per-child tool/skill/model profile (FeatureShipping 001 §3.8) */
+export interface ChildProfile {
+  id: string;
   childFsm: string;
+  toolPack: string[];
+  skillPack: string[];
+  credentialId?: string;
+  modelId?: string;
+  inputMap?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+/** SPAWN config v2 — parallel workers + packs */
+export interface SpawnConfig {
+  mode: "homogeneous" | "heterogeneous";
   count: number;
-  strategy: "waitAll" | "quorum" | "firstSuccess";
+  maxConcurrency: number;
+  strategy: AggregationStrategy;
+  quorumK?: number;
+  cancelOnParentHalt: boolean;
+  profiles: ChildProfile[];
+  aggregateTo: string;
+}
+
+export interface VerifyConfig {
+  kind: "schema" | "script";
+  scriptRef?: string;
+}
+
+export interface OnErrorConfig {
+  signal: string;
+  to?: string;
 }
 
 export interface SystemFunctionConfig {
   summaryStrategy: "template" | "llm";
+  /** Types for C1; enable-map UI lands in C2 */
+  enabledStateIds: string[];
+  disabledStateIds: string[];
+  rewire: Array<{ from: string; on: string; to: string }>;
 }
 
 /** Data carried by every canvas node */
@@ -50,6 +85,10 @@ export interface StateNodeData extends Record<string, unknown> {
   stateType: FSMStateType;
   label: string;
   description: string;
+  inputSchema: string;
+  outputSchema: string;
+  verify: VerifyConfig;
+  onError: OnErrorConfig;
   script: ScriptConfig;
   ai: AIConfig;
   guardrails: GuardrailConfig;
@@ -153,14 +192,101 @@ export const DEFAULT_SIGNALS: Record<FSMStateType, string> = {
   END: "::SYSTEM.HALT",
 };
 
+export function defaultChildProfile(childFsm = "child-worker"): ChildProfile {
+  return {
+    id: "default",
+    childFsm,
+    toolPack: [],
+    skillPack: [],
+  };
+}
+
+export function defaultSpawnConfig(): SpawnConfig {
+  return {
+    mode: "homogeneous",
+    count: 3,
+    maxConcurrency: 2,
+    strategy: "waitAll",
+    cancelOnParentHalt: true,
+    profiles: [defaultChildProfile()],
+    aggregateTo: "",
+  };
+}
+
+/** Normalize persisted / legacy spawn shapes to SpawnConfig v2 */
+export function normalizeSpawn(raw: unknown): SpawnConfig {
+  const base = defaultSpawnConfig();
+  if (!raw || typeof raw !== "object") return base;
+  const s = raw as Record<string, unknown>;
+
+  // Legacy v1: { childFsm, count, strategy }
+  if (!("profiles" in s) && typeof s.childFsm === "string") {
+    return {
+      ...base,
+      count: typeof s.count === "number" ? s.count : base.count,
+      strategy:
+        s.strategy === "quorum" || s.strategy === "firstSuccess" || s.strategy === "waitAll"
+          ? s.strategy
+          : base.strategy,
+      profiles: [defaultChildProfile(s.childFsm)],
+    };
+  }
+
+  const profiles = Array.isArray(s.profiles)
+    ? (s.profiles as ChildProfile[]).map((p, i) => ({
+        id: p.id || `p${i}`,
+        childFsm: p.childFsm || "child-worker",
+        toolPack: Array.isArray(p.toolPack) ? p.toolPack : [],
+        skillPack: Array.isArray(p.skillPack) ? p.skillPack : [],
+        credentialId: p.credentialId,
+        modelId: p.modelId,
+        inputMap: p.inputMap,
+        timeoutMs: p.timeoutMs,
+      }))
+    : base.profiles;
+
+  const maxConcurrency =
+    typeof s.maxConcurrency === "number" ? Math.max(1, s.maxConcurrency) : base.maxConcurrency;
+
+  return {
+    mode: s.mode === "heterogeneous" ? "heterogeneous" : "homogeneous",
+    count: typeof s.count === "number" ? s.count : base.count,
+    maxConcurrency,
+    strategy:
+      s.strategy === "quorum" || s.strategy === "firstSuccess" || s.strategy === "waitAll"
+        ? s.strategy
+        : base.strategy,
+    quorumK: typeof s.quorumK === "number" ? s.quorumK : undefined,
+    cancelOnParentHalt:
+      typeof s.cancelOnParentHalt === "boolean" ? s.cancelOnParentHalt : true,
+    profiles: profiles.length > 0 ? profiles : base.profiles,
+    aggregateTo: typeof s.aggregateTo === "string" ? s.aggregateTo : "",
+  };
+}
+
+export function primaryProfile(spawn: SpawnConfig): ChildProfile {
+  return spawn.profiles[0] ?? defaultChildProfile();
+}
+
 export function defaultNodeData(
   stateType: FSMStateType,
   label: string
 ): StateNodeData {
+  const errorSignal =
+    stateType === "AI"
+      ? "::AI.VALIDATION_ERROR"
+      : stateType === "SPAWN"
+        ? "::SCRIPT.ERROR"
+        : "::SCRIPT.ERROR";
+
   return {
     stateType,
     label,
     description: "",
+    inputSchema: "",
+    outputSchema: "",
+    verify: { kind: "schema" },
+    onError: { signal: errorSignal },
     script: {
       toolName: `${label.toLowerCase().replace(/\s+/g, "_")}_tool`,
       language: "python",
@@ -170,6 +296,7 @@ export function defaultNodeData(
           : "",
     },
     ai: {
+      credentialId: "",
       model: "claude-sonnet-4-5",
       temperature: 0.2,
       maxTokens: 4000,
@@ -177,7 +304,12 @@ export function defaultNodeData(
       outputSchema: "",
     },
     guardrails: { timeoutMs: 30000, retryMax: 2, retryBackoffMs: 1000 },
-    spawn: { childFsm: "child-worker", count: 3, strategy: "waitAll" },
-    systemFunction: { summaryStrategy: "template" },
+    spawn: defaultSpawnConfig(),
+    systemFunction: {
+      summaryStrategy: "template",
+      enabledStateIds: [],
+      disabledStateIds: [],
+      rewire: [],
+    },
   };
 }

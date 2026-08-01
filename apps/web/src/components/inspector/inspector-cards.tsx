@@ -21,9 +21,18 @@ import { BorderBeam } from "@/components/ui/border-beam";
 import { Meteors } from "@/components/ui/meteors";
 import { Button } from "@/components/ui/button";
 import { BookmarkPlus, Trash2 } from "lucide-react";
-import type { StateNode, ToolLanguage } from "@/lib/fsm-types";
+import type {
+  AggregationStrategy,
+  SpawnConfig,
+  StateNode,
+  ToolLanguage,
+} from "@/lib/fsm-types";
+import { normalizeSpawn, primaryProfile } from "@/lib/fsm-types";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useScriptTemplateStore } from "@/stores/script-template-store";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 
 const LANGUAGE_EXTENSIONS = {
   python: [python()],
@@ -93,7 +102,7 @@ export function ScriptEditorCard({ node, patch }: CardProps) {
 
       {/* Custom script templates — save yours, reuse anywhere */}
       <div className="mb-3 flex items-center gap-2">
-        <Select onValueChange={(v) => v && loadTemplate(v)}>
+        <Select onValueChange={(v) => { if (typeof v === "string" && v) loadTemplate(v); }}>
           <SelectTrigger className="h-7 flex-1 border-foreground/10 bg-foreground/5 text-xs">
             <SelectValue placeholder="Load a script template…" />
           </SelectTrigger>
@@ -158,7 +167,10 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
   const ai = node.data.ai;
   const credentials = useCredentialStore((s) => s.credentials);
   const activeId = useCredentialStore((s) => s.activeId);
-  const discovered = credentials.find((c) => c.id === activeId)?.models;
+  const boundCred =
+    credentials.find((c) => c.id === ai.credentialId) ??
+    credentials.find((c) => c.id === activeId);
+  const discovered = boundCred?.models;
   const models = discovered && discovered.length > 0 ? discovered : FALLBACK_MODELS;
 
   return (
@@ -169,12 +181,46 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
 
       <div className="space-y-3">
         <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Credential (BYOK)</Label>
+          <Select
+            value={ai.credentialId || activeId || undefined}
+            onValueChange={(v) =>
+              patch({
+                ai: {
+                  ...ai,
+                  credentialId: typeof v === "string" ? v : "",
+                },
+              })
+            }
+          >
+            <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
+              <SelectValue placeholder="Select credential…" />
+            </SelectTrigger>
+            <SelectContent className="border-foreground/10 bg-popover text-foreground">
+              {credentials.length === 0 ? (
+                <SelectItem value="__none" disabled>
+                  No credentials — add in Settings
+                </SelectItem>
+              ) : (
+                credentials.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.label || c.provider}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">
             Model {discovered?.length ? "(BYOK discovered)" : "(default list)"}
           </Label>
           <Select
             value={ai.model}
-            onValueChange={(v) => patch({ ai: { ...ai, model: v } })}
+            onValueChange={(v) =>
+              patch({ ai: { ...ai, model: typeof v === "string" ? v : ai.model } })
+            }
           >
             <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
               <SelectValue />
@@ -246,6 +292,86 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
             className="min-h-[70px] border-foreground/10 bg-foreground/5 font-mono text-xs"
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Input/output schemas + verify + onError (FeatureShipping 001 C1) */
+export function VerifiabilityCard({ node, patch }: CardProps) {
+  const verify = node.data.verify ?? { kind: "schema" as const };
+  const onError = node.data.onError ?? { signal: "::SCRIPT.ERROR" };
+
+  return (
+    <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
+      <h3 className="mb-3 text-sm font-semibold text-foreground">
+        Verifiability
+      </h3>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Input schema (JSON)</Label>
+          <Textarea
+            value={node.data.inputSchema ?? ""}
+            onChange={(e) => patch({ inputSchema: e.target.value })}
+            placeholder='{"type":"object"}'
+            className="min-h-[56px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Output schema (JSON)</Label>
+          <Textarea
+            value={node.data.outputSchema ?? ""}
+            onChange={(e) => patch({ outputSchema: e.target.value })}
+            placeholder='{"type":"object"}'
+            className="min-h-[56px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Verify</Label>
+            <Select
+              value={verify.kind}
+              onValueChange={(v) =>
+                patch({
+                  verify: {
+                    kind: v === "script" ? "script" : "schema",
+                    scriptRef: verify.scriptRef,
+                  },
+                })
+              }
+            >
+              <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                <SelectItem value="schema">schema</SelectItem>
+                <SelectItem value="script">script</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">On-error signal</Label>
+            <Input
+              value={onError.signal}
+              onChange={(e) =>
+                patch({ onError: { ...onError, signal: e.target.value } })
+              }
+              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            />
+          </div>
+        </div>
+        {verify.kind === "script" && (
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Verify script ref</Label>
+            <Input
+              value={verify.scriptRef ?? ""}
+              onChange={(e) =>
+                patch({ verify: { ...verify, scriptRef: e.target.value } })
+              }
+              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -333,47 +459,206 @@ export function GuardrailsCard({ node, patch }: CardProps) {
   );
 }
 
-/** SPAWN-state config (§6.3) */
+const SPAWN_TABS = [
+  "Topology",
+  "Tools",
+  "Skills",
+  "Models",
+  "Aggregation",
+] as const;
+
+type SpawnTab = (typeof SPAWN_TABS)[number];
+
+function csvToList(raw: string): string[] {
+  return raw
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** SPAWN-state config — Topology | Tools | Skills | Models | Aggregation */
 export function SpawnCard({ node, patch }: CardProps) {
-  const spawn = node.data.spawn;
+  const [tab, setTab] = useState<SpawnTab>("Topology");
+  const spawn = normalizeSpawn(node.data.spawn);
+  const profile = primaryProfile(spawn);
+
+  const setSpawn = (next: SpawnConfig) => patch({ spawn: next });
+
+  const patchProfile = (partial: Partial<typeof profile>) => {
+    const profiles = [...spawn.profiles];
+    profiles[0] = { ...profile, ...partial };
+    setSpawn({ ...spawn, profiles });
+  };
+
   return (
     <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
       <h3 className="mb-3 text-sm font-semibold text-foreground">
         Subagent Fan-Out
       </h3>
-      <div className="space-y-3">
+
+      <div className="mb-3 flex flex-wrap gap-1">
+        {SPAWN_TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={cn(
+              "rounded-md px-2 py-1 text-[10px] font-semibold tracking-wide uppercase",
+              tab === t
+                ? "bg-foreground/10 text-foreground"
+                : "text-muted-foreground hover:bg-foreground/5"
+            )}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "Topology" && (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Mode</Label>
+            <Select
+              value={spawn.mode}
+              onValueChange={(v) =>
+                setSpawn({
+                  ...spawn,
+                  mode: v === "heterogeneous" ? "heterogeneous" : "homogeneous",
+                })
+              }
+            >
+              <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                <SelectItem value="homogeneous">homogeneous</SelectItem>
+                <SelectItem value="heterogeneous">heterogeneous</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Child FSM</Label>
+            <Input
+              value={profile.childFsm}
+              onChange={(e) => patchProfile({ childFsm: e.target.value })}
+              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Count</Label>
+              <Input
+                type="number"
+                value={spawn.count}
+                onChange={(e) =>
+                  setSpawn({ ...spawn, count: Number(e.target.value) })
+                }
+                className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="spawn-max-concurrency"
+                className="text-xs text-muted-foreground"
+              >
+                Max concurrency
+              </Label>
+              <Input
+                id="spawn-max-concurrency"
+                type="number"
+                min={1}
+                value={spawn.maxConcurrency}
+                onChange={(e) =>
+                  setSpawn({
+                    ...spawn,
+                    maxConcurrency: Math.max(1, Number(e.target.value) || 1),
+                  })
+                }
+                className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-foreground/10 px-3 py-2">
+            <Label className="text-xs text-muted-foreground">
+              Cancel on parent halt
+            </Label>
+            <Switch
+              checked={spawn.cancelOnParentHalt}
+              onCheckedChange={(v) =>
+                setSpawn({ ...spawn, cancelOnParentHalt: Boolean(v) })
+              }
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === "Tools" && (
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Child FSM</Label>
-          <Input
-            value={spawn.childFsm}
-            onChange={(e) =>
-              patch({ spawn: { ...spawn, childFsm: e.target.value } })
-            }
-            className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+          <Label className="text-xs text-muted-foreground">
+            Tool pack (comma / newline separated)
+          </Label>
+          <Textarea
+            value={profile.toolPack.join(", ")}
+            onChange={(e) => patchProfile({ toolPack: csvToList(e.target.value) })}
+            placeholder="fetch_pages, write_report"
+            className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+      )}
+
+      {tab === "Skills" && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            Skill pack (opaque skill ids)
+          </Label>
+          <Textarea
+            value={profile.skillPack.join(", ")}
+            onChange={(e) =>
+              patchProfile({ skillPack: csvToList(e.target.value) })
+            }
+            placeholder="ship-feature, code-review"
+            className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+          />
+        </div>
+      )}
+
+      {tab === "Models" && (
+        <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Count</Label>
+            <Label className="text-xs text-muted-foreground">
+              Child credential id
+            </Label>
             <Input
-              type="number"
-              value={spawn.count}
+              value={profile.credentialId ?? ""}
               onChange={(e) =>
-                patch({ spawn: { ...spawn, count: Number(e.target.value) } })
+                patchProfile({ credentialId: e.target.value || undefined })
               }
               className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
             />
           </div>
           <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Child model id</Label>
+            <Input
+              value={profile.modelId ?? ""}
+              onChange={(e) =>
+                patchProfile({ modelId: e.target.value || undefined })
+              }
+              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === "Aggregation" && (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Strategy</Label>
             <Select
               value={spawn.strategy}
               onValueChange={(v) =>
-                patch({
-                  spawn: {
-                    ...spawn,
-                    strategy: v as typeof spawn.strategy,
-                  },
+                setSpawn({
+                  ...spawn,
+                  strategy: (v as AggregationStrategy) || "waitAll",
                 })
               }
             >
@@ -387,8 +672,34 @@ export function SpawnCard({ node, patch }: CardProps) {
               </SelectContent>
             </Select>
           </div>
+          {spawn.strategy === "quorum" && (
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Quorum k</Label>
+              <Input
+                type="number"
+                value={spawn.quorumK ?? 1}
+                onChange={(e) =>
+                  setSpawn({ ...spawn, quorumK: Number(e.target.value) })
+                }
+                className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">
+              Aggregate to (state id)
+            </Label>
+            <Input
+              value={spawn.aggregateTo}
+              onChange={(e) =>
+                setSpawn({ ...spawn, aggregateTo: e.target.value })
+              }
+              placeholder="AGG_1"
+              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
