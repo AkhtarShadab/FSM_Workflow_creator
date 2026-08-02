@@ -1,8 +1,30 @@
 import {
+  isStateDisabledByMask,
   normalizeSpawn,
   primaryProfile,
   type CanvasData,
+  type LintIssue,
+  type StateNode,
+  type SystemFunctionConfig,
+  type TransitionEdge,
 } from "./fsm-types";
+import {
+  emptyRegistry,
+  isKnownSignal,
+  isKnownSkill,
+  type ProjectRegistry,
+} from "./registry";
+
+export interface LintCredentialRef {
+  id: string;
+  active: boolean;
+  models: string[];
+}
+
+export interface LintContext {
+  credentials?: LintCredentialRef[];
+  registry?: ProjectRegistry;
+}
 
 /**
  * canvasToDsl — pure function (§10.2: "FSM DSL is derived via a pure
@@ -73,6 +95,65 @@ export function canvasToDsl(
               : {}),
           },
         };
+      case "HTTP": {
+        const http = node.data.http ?? {
+          method: "GET" as const,
+          urlTemplate: "",
+          headers: {},
+          successSignals: [] as string[],
+        };
+        return {
+          ...base,
+          http: {
+            method: http.method,
+            urlTemplate: http.urlTemplate,
+            ...(http.authCredentialId
+              ? { authCredentialId: http.authCredentialId }
+              : {}),
+            headers: http.headers ?? {},
+            ...(http.bodyTemplate ? { bodyTemplate: http.bodyTemplate } : {}),
+            successSignals: http.successSignals ?? [],
+          },
+        };
+      }
+      case "VALIDATE": {
+        const v = node.data.validate ?? { kind: "schema" as const };
+        return {
+          ...base,
+          validate: {
+            kind: v.kind,
+            ...(v.schema ? { schema: safeJson(v.schema) } : {}),
+            ...(v.predicateRef ? { predicateRef: v.predicateRef } : {}),
+          },
+        };
+      }
+      case "EXTERNAL_AI": {
+        const ea = node.data.externalAi ?? {
+          credentialId: "",
+          credentialKind: "openai_compatible" as const,
+          baseUrl: "",
+          model: "",
+          temperature: 0.2,
+          maxTokens: 4000,
+          systemPrompt: "",
+          outputSchema: "",
+        };
+        return {
+          ...base,
+          externalAi: {
+            credentialId: ea.credentialId,
+            credentialKind: ea.credentialKind,
+            baseUrl: ea.baseUrl,
+            model: ea.model,
+            temperature: ea.temperature,
+            maxTokens: ea.maxTokens,
+            systemPrompt: ea.systemPrompt,
+            ...(ea.outputSchema
+              ? { outputSchema: safeJson(ea.outputSchema) }
+              : {}),
+          },
+        };
+      }
       case "SPAWN": {
         const spawn = normalizeSpawn(node.data.spawn);
         return {
@@ -135,34 +216,152 @@ function safeJson(raw: string): unknown {
 
 const ERROR_SIGNAL_HINT = /\.ERROR|VALIDATION_ERROR|HALT/;
 
-/** Lint helpers (E4 — FSM linter + FeatureShipping 001 C1) */
-export function lintCanvas(canvas: CanvasData): string[] {
-  const warnings: string[] = [];
+/** `{{payload.foo}}` keys referenced in a template */
+export function findUndeclaredPayloadKeys(template: string): string[] {
+  const keys: string[] = [];
+  const re = /\{\{\s*payload\.([a-zA-Z0-9_]+)\s*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(template)) !== null) {
+    keys.push(m[1]);
+  }
+  // Without a declared inputSchema we cannot resolve — flag all payload refs as undeclared
+  return [...new Set(keys)];
+}
+
+function issue(
+  severity: LintIssue["severity"],
+  code: string,
+  message: string,
+  nodeId?: string
+): LintIssue {
+  return { severity, code, message, nodeId };
+}
+
+/** Whether a SYSTEM_FUNCTION mask has any enable/disable/rewire entries */
+export function maskIsActive(mask: SystemFunctionConfig): boolean {
+  return (
+    mask.enabledStateIds.length > 0 ||
+    mask.disabledStateIds.length > 0 ||
+    mask.rewire.length > 0
+  );
+}
+
+/**
+ * BFS reachability START → END under a SYS_FUNC mask.
+ * Disabled nodes are skipped (outgoing edges of disabled nodes are not taken
+ * from them as sources; edges into them do not land). Rewire rows override
+ * (from, on) → to when both endpoints are enabled.
+ */
+export function hasPathToEndUnderMask(
+  nodes: StateNode[],
+  edges: TransitionEdge[],
+  mask: SystemFunctionConfig
+): boolean {
+  const starts = nodes.filter((n) => n.data.stateType === "START");
+  const ends = new Set(
+    nodes.filter((n) => n.data.stateType === "END").map((n) => n.id)
+  );
+  if (starts.length === 0 || ends.size === 0) return false;
+
+  const enabled = new Set(
+    nodes
+      .filter((n) => !isStateDisabledByMask(n.id, mask))
+      .map((n) => n.id)
+  );
+
+  // Adjacency: signal-keyed map, then apply rewires
+  type Adj = Map<string, Map<string, string>>; // from → (on → to)
+  const adj: Adj = new Map();
+
+  const setEdge = (from: string, on: string, to: string) => {
+    if (!enabled.has(from) || !enabled.has(to)) return;
+    if (!adj.has(from)) adj.set(from, new Map());
+    adj.get(from)!.set(on, to);
+  };
+
+  for (const e of edges) {
+    setEdge(e.source, e.data?.signal ?? "::SCRIPT.NEXT", e.target);
+  }
+  for (const r of mask.rewire) {
+    if (r.from && r.on && r.to) setEdge(r.from, r.on, r.to);
+  }
+
+  const queue = starts.map((s) => s.id).filter((id) => enabled.has(id));
+  const seen = new Set<string>(queue);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (ends.has(cur)) return true;
+    const outs = adj.get(cur);
+    if (!outs) continue;
+    for (const to of outs.values()) {
+      if (!seen.has(to)) {
+        seen.add(to);
+        queue.push(to);
+      }
+    }
+  }
+  return false;
+}
+
+/** Lint helpers (E4 — FSM linter + FeatureShipping 001 C1–C6) */
+export function lintCanvas(
+  canvas: CanvasData,
+  ctx: LintContext = {}
+): LintIssue[] {
+  const issues: LintIssue[] = [];
   const { nodes, edges } = canvas;
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const registry = ctx.registry ?? emptyRegistry();
+  const credentials = ctx.credentials ?? [];
+  const credById = new Map(credentials.map((c) => [c.id, c]));
 
   const starts = nodes.filter((n) => n.data.stateType === "START");
-  if (starts.length === 0) warnings.push("Missing START state.");
-  if (starts.length > 1) warnings.push("Multiple START states defined.");
+  if (starts.length === 0) {
+    issues.push(issue("warning", "MISSING_START", "Missing START state."));
+  }
+  if (starts.length > 1) {
+    issues.push(
+      issue("warning", "MULTIPLE_START", "Multiple START states defined.")
+    );
+  }
 
   const ends = nodes.filter((n) => n.data.stateType === "END");
-  if (ends.length === 0) warnings.push("Missing END state.");
+  if (ends.length === 0) {
+    issues.push(issue("warning", "MISSING_END", "Missing END state."));
+  }
 
   const targetIds = new Set(edges.map((e) => e.target));
   for (const n of nodes) {
     if (n.data.stateType !== "START" && !targetIds.has(n.id)) {
-      warnings.push(`State "${n.data.label}" (${n.id}) is unreachable.`);
+      issues.push(
+        issue(
+          "warning",
+          "UNREACHABLE",
+          `State "${n.data.label}" (${n.id}) is unreachable.`,
+          n.id
+        )
+      );
     }
   }
 
   const sourceIds = new Set(edges.map((e) => e.source));
   for (const n of nodes) {
     if (n.data.stateType !== "END" && !sourceIds.has(n.id)) {
-      warnings.push(`State "${n.data.label}" (${n.id}) is a dead end.`);
+      issues.push(
+        issue(
+          "warning",
+          "DEAD_END",
+          `State "${n.data.label}" (${n.id}) is a dead end.`,
+          n.id
+        )
+      );
     }
   }
 
   const runnable = nodes.filter((n) =>
-    ["SCRIPT", "AI", "SPAWN"].includes(n.data.stateType)
+    ["SCRIPT", "AI", "SPAWN", "HTTP", "VALIDATE", "EXTERNAL_AI"].includes(
+      n.data.stateType
+    )
   );
   for (const n of runnable) {
     const outs = edges.filter((e) => e.source === n.id);
@@ -170,8 +369,13 @@ export function lintCanvas(canvas: CanvasData): string[] {
       ERROR_SIGNAL_HINT.test(e.data?.signal ?? "")
     );
     if (!hasErrorEdge) {
-      warnings.push(
-        `State "${n.data.label}" (${n.id}) has no error-routing edge (::*.ERROR / VALIDATION_ERROR).`
+      issues.push(
+        issue(
+          "warning",
+          "MISSING_ERROR_EDGE",
+          `State "${n.data.label}" (${n.id}) has no error-routing edge (::*.ERROR / VALIDATION_ERROR).`,
+          n.id
+        )
       );
     }
   }
@@ -181,30 +385,236 @@ export function lintCanvas(canvas: CanvasData): string[] {
     const profile = primaryProfile(spawn);
 
     if (spawn.maxConcurrency < 1) {
-      warnings.push(`SPAWN "${n.data.label}": maxConcurrency must be ≥ 1.`);
+      issues.push(
+        issue(
+          "error",
+          "SPAWN_CONCURRENCY",
+          `SPAWN "${n.data.label}": maxConcurrency must be ≥ 1.`,
+          n.id
+        )
+      );
     }
 
     if (spawn.mode === "heterogeneous" && spawn.profiles.length !== spawn.count) {
-      warnings.push(
-        `SPAWN "${n.data.label}": heterogeneous mode requires profiles.length === count (${spawn.profiles.length} ≠ ${spawn.count}).`
+      issues.push(
+        issue(
+          "error",
+          "SPAWN_PROFILE_MISMATCH",
+          `SPAWN "${n.data.label}": heterogeneous mode requires profiles.length === count (${spawn.profiles.length} ≠ ${spawn.count}).`,
+          n.id
+        )
       );
     }
 
     if (profile.toolPack.length === 0) {
-      warnings.push(
-        `SPAWN "${n.data.label}": empty tool pack — AI-only children OK; SCRIPT children will have no tools.`
+      issues.push(
+        issue(
+          "warning",
+          "SPAWN_EMPTY_TOOL_PACK",
+          `SPAWN "${n.data.label}": empty tool pack — AI-only children OK; SCRIPT children will have no tools.`,
+          n.id
+        )
       );
     }
 
     for (const skill of profile.skillPack) {
       if (!skill.trim()) {
-        warnings.push(`SPAWN "${n.data.label}": empty skill ref in skill pack.`);
+        issues.push(
+          issue(
+            "error",
+            "SPAWN_EMPTY_SKILL_REF",
+            `SPAWN "${n.data.label}": empty skill ref in skill pack.`,
+            n.id
+          )
+        );
+      } else if (!isKnownSkill(skill, registry)) {
+        issues.push(
+          issue(
+            "error",
+            "SPAWN_UNKNOWN_SKILL",
+            `SPAWN "${n.data.label}": skill "${skill}" is not in the project registry.`,
+            n.id
+          )
+        );
+      }
+    }
+  }
+
+  // C6 — unknown edge signals
+  for (const e of edges) {
+    const signal = e.data?.signal ?? "::SCRIPT.NEXT";
+    if (!isKnownSignal(signal, registry)) {
+      issues.push(
+        issue(
+          "error",
+          "UNKNOWN_SIGNAL",
+          `Edge ${e.id}: unknown signal "${signal}" (not built-in or registered).`,
+          e.source
+        )
+      );
+    }
+  }
+
+  // C3 — AI credential / model refs
+  for (const n of nodes.filter((x) => x.data.stateType === "AI")) {
+    const credId = n.data.ai.credentialId;
+    if (credId) {
+      const cred = credById.get(credId);
+      if (!cred) {
+        issues.push(
+          issue(
+            "error",
+            "AI_CREDENTIAL_MISSING",
+            `AI "${n.data.label}": credential "${credId}" not found.`,
+            n.id
+          )
+        );
+      } else if (!cred.active) {
+        issues.push(
+          issue(
+            "error",
+            "AI_CREDENTIAL_INACTIVE",
+            `AI "${n.data.label}": credential "${credId}" is inactive.`,
+            n.id
+          )
+        );
+      } else if (
+        n.data.ai.model &&
+        cred.models.length > 0 &&
+        !cred.models.includes(n.data.ai.model)
+      ) {
+        issues.push(
+          issue(
+            "warning",
+            "AI_MODEL_UNKNOWN",
+            `AI "${n.data.label}": model "${n.data.ai.model}" not in discovered list for this credential.`,
+            n.id
+          )
+        );
+      }
+    }
+  }
+
+  for (const n of nodes.filter((x) => x.data.stateType === "HTTP")) {
+    const http = n.data.http ?? {
+      method: "GET" as const,
+      urlTemplate: "",
+      headers: {},
+      successSignals: [] as string[],
+    };
+    if (!http.successSignals || http.successSignals.length === 0) {
+      issues.push(
+        issue(
+          "error",
+          "HTTP_NO_SUCCESS_SIGNALS",
+          `HTTP "${n.data.label}": successSignals must not be empty.`,
+          n.id
+        )
+      );
+    }
+    const undeclared = findUndeclaredPayloadKeys(http.urlTemplate ?? "");
+    if (undeclared.length > 0) {
+      issues.push(
+        issue(
+          "warning",
+          "HTTP_UNDECLARED_PAYLOAD_KEY",
+          `HTTP "${n.data.label}": urlTemplate references undeclared payload key(s): ${undeclared.join(", ")}.`,
+          n.id
+        )
+      );
+    }
+  }
+
+  for (const n of nodes.filter((x) => x.data.stateType === "VALIDATE")) {
+    const v = n.data.validate ?? { kind: "schema" as const };
+    const missingSchema =
+      v.kind === "schema" && !(v.schema && v.schema.trim());
+    const missingPred =
+      v.kind === "predicate" && !(v.predicateRef && v.predicateRef.trim());
+    if (missingSchema || missingPred) {
+      issues.push(
+        issue(
+          "error",
+          "VALIDATE_INCOMPLETE",
+          `VALIDATE "${n.data.label}": ${
+            v.kind === "schema"
+              ? "schema is required"
+              : "predicateRef is required"
+          }.`,
+          n.id
+        )
+      );
+    }
+  }
+
+  // C2 — SYS_FUNC enable map / rewire lint
+  for (const n of nodes.filter((x) => x.data.stateType === "SYSTEM_FUNCTION")) {
+    const mask = n.data.systemFunction;
+    const label = n.data.label;
+
+    for (const r of mask.rewire) {
+      if (r.to && !nodeIds.has(r.to)) {
+        issues.push(
+          issue(
+            "error",
+            "REWIRE_TARGET_MISSING",
+            `SYS_FUNC "${label}": rewire target "${r.to}" does not exist.`,
+            n.id
+          )
+        );
+      }
+      if (r.from && r.on) {
+        const match = edges.some(
+          (e) =>
+            e.source === r.from && (e.data?.signal ?? "::SCRIPT.NEXT") === r.on
+        );
+        if (!match) {
+          issues.push(
+            issue(
+              "warning",
+              "REWIRE_NO_MATCHING_EDGE",
+              `SYS_FUNC "${label}": rewire ${r.from} on ${r.on} has no matching authored edge.`,
+              n.id
+            )
+          );
+        }
       }
     }
 
-    // Project skill registry lands later — flag unknown-looking empty ids only for now.
-    // Non-empty string refs are accepted as opaque ids (C1).
+    if (maskIsActive(mask) && !hasPathToEndUnderMask(nodes, edges, mask)) {
+      issues.push(
+        issue(
+          "error",
+          "MASK_NO_PATH_TO_END",
+          `SYS_FUNC "${label}": enable map leaves no path from START to END.`,
+          n.id
+        )
+      );
+    }
+
+    // Mask drops all error-routing edges of a still-enabled runnable state
+    for (const r of runnable) {
+      if (isStateDisabledByMask(r.id, mask)) continue;
+      const errorEdges = edges.filter(
+        (e) =>
+          e.source === r.id && ERROR_SIGNAL_HINT.test(e.data?.signal ?? "")
+      );
+      if (errorEdges.length === 0) continue;
+      const allTargetsDisabled = errorEdges.every((e) =>
+        isStateDisabledByMask(e.target, mask)
+      );
+      if (allTargetsDisabled) {
+        issues.push(
+          issue(
+            "warning",
+            "MASK_DROPS_ERROR_EDGES",
+            `SYS_FUNC "${label}": mask disables all error targets of "${r.data.label}".`,
+            n.id
+          )
+        );
+      }
+    }
   }
 
-  return warnings;
+  return issues;
 }

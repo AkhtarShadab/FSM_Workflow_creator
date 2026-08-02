@@ -13,9 +13,12 @@ import { useCanvasStore } from "@/stores/canvas-store";
 import {
   GenerativeConfigCard,
   GuardrailsCard,
+  HttpCard,
   ScriptEditorCard,
   SpawnCard,
   SystemFunctionCard,
+  ValidateCard,
+  ExternalAICard,
   VerifiabilityCard,
 } from "./inspector-cards";
 
@@ -107,10 +110,31 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
                 {node.data.stateType === "SPAWN" && (
                   <SpawnCard node={node} patch={patch} />
                 )}
-                {node.data.stateType === "SYSTEM_FUNCTION" && (
-                  <SystemFunctionCard node={node} patch={patch} />
+                {node.data.stateType === "HTTP" && (
+                  <HttpCard node={node} patch={patch} />
                 )}
-                {["SCRIPT", "AI", "SPAWN"].includes(node.data.stateType) && (
+                {node.data.stateType === "VALIDATE" && (
+                  <ValidateCard node={node} patch={patch} />
+                )}
+                {node.data.stateType === "EXTERNAL_AI" && (
+                  <ExternalAICard node={node} patch={patch} />
+                )}
+                {node.data.stateType === "SYSTEM_FUNCTION" && (
+                  <SystemFunctionCard
+                    node={node}
+                    patch={patch}
+                    allNodes={nodes}
+                    allEdges={edges}
+                  />
+                )}
+                {[
+                  "SCRIPT",
+                  "AI",
+                  "SPAWN",
+                  "HTTP",
+                  "VALIDATE",
+                  "EXTERNAL_AI",
+                ].includes(node.data.stateType) && (
                   <>
                     <VerifiabilityCard node={node} patch={patch} />
                     <GuardrailsCard node={node} patch={patch} />

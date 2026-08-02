@@ -4,11 +4,14 @@ import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   Brain,
+  Cloud,
   Flag,
   GitBranch,
+  Globe,
   Layers,
   Merge,
   Play,
+  ShieldCheck,
   SquareTerminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,7 +25,10 @@ import {
 const STATE_ICONS = {
   START: Play,
   SCRIPT: SquareTerminal,
+  HTTP: Globe,
   AI: Brain,
+  EXTERNAL_AI: Cloud,
+  VALIDATE: ShieldCheck,
   SPAWN: GitBranch,
   AGGREGATE: Merge,
   SYSTEM_FUNCTION: Layers,
@@ -46,6 +52,7 @@ export const StateCircleNode = memo(function StateCircleNode({
 }: NodeProps<StateNode>) {
   const colors = STATE_COLORS[data.stateType];
   const Icon = STATE_ICONS[data.stateType];
+  const dimmed = Boolean(data.dimmed);
 
   return (
     <div
@@ -55,8 +62,10 @@ export const StateCircleNode = memo(function StateCircleNode({
         colors.note,
         colors.border,
         tiltFor(id),
-        selected && "rotate-0 outline-2 outline-dashed outline-offset-4 outline-[var(--ink)]"
+        selected && "rotate-0 outline-2 outline-dashed outline-offset-4 outline-[var(--ink)]",
+        dimmed && "opacity-40 grayscale"
       )}
+      data-dimmed={dimmed ? "true" : undefined}
     >
       {/* washi tape */}
       <div
