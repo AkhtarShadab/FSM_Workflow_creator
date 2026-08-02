@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   Spline,
+  UserRound,
 } from "lucide-react";
 import {
   Select,
@@ -39,6 +40,7 @@ const ICONS: Record<FSMStateType, typeof Play> = {
   AI: Brain,
   EXTERNAL_AI: Cloud,
   VALIDATE: ShieldCheck,
+  HUMAN: UserRound,
   SPAWN: GitBranch,
   AGGREGATE: Merge,
   SYSTEM_FUNCTION: Layers,

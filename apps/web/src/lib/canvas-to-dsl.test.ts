@@ -149,6 +149,7 @@ describe("canvasToDsl spawn v2", () => {
             enabledStateIds: ["S0", "END"],
             disabledStateIds: ["SC1"],
             rewire: [{ from: "S0", on: "::SCRIPT.NEXT", to: "END" }],
+            heads: [],
           },
         }),
         node("SC1", "SCRIPT"),

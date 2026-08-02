@@ -1,7 +1,11 @@
 import {
   isStateDisabledByMask,
+  normalizeAggregate,
+  normalizeEdgeData,
   normalizeSpawn,
+  normalizeSystemFunction,
   primaryProfile,
+  SYSFUNC_HEADS_WARN_THRESHOLD,
   type CanvasData,
   type LintIssue,
   type StateNode,
@@ -42,10 +46,19 @@ export function canvasToDsl(
   const states = nodes.map((node) => {
     const transitions = edges
       .filter((e) => e.source === node.id)
-      .map((e) => ({
-        on: e.data?.signal ?? "::SCRIPT.NEXT",
-        to: e.target,
-      }));
+      .map((e) => {
+        const data = normalizeEdgeData(e.data, e.source, e.target);
+        return {
+          on: data.signal,
+          to: e.target,
+          kind: data.kind,
+          ...(data.kind === "self-loop" && data.maxIterations != null
+            ? { maxIterations: data.maxIterations }
+            : {}),
+          ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
+          ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
+        };
+      });
 
     const verifiability = {
       ...(node.data.inputSchema ? { inputSchema: safeJson(node.data.inputSchema) } : {}),
@@ -173,16 +186,42 @@ export function canvasToDsl(
           },
         };
       }
-      case "SYSTEM_FUNCTION":
+      case "SYSTEM_FUNCTION": {
+        const sf = normalizeSystemFunction(node.data.systemFunction);
         return {
           ...base,
           checkpoint: {
-            summaryStrategy: node.data.systemFunction.summaryStrategy,
-            enabledStateIds: node.data.systemFunction.enabledStateIds ?? [],
-            disabledStateIds: node.data.systemFunction.disabledStateIds ?? [],
-            rewire: node.data.systemFunction.rewire ?? [],
+            summaryStrategy: sf.summaryStrategy,
+            enabledStateIds: sf.enabledStateIds,
+            disabledStateIds: sf.disabledStateIds,
+            rewire: sf.rewire,
+            heads: sf.heads,
           },
         };
+      }
+      case "AGGREGATE": {
+        const aggregate = normalizeAggregate(node.data.aggregate);
+        return {
+          ...base,
+          aggregate,
+        };
+      }
+      case "HUMAN": {
+        const human = node.data.human ?? {
+          prompt: "",
+          approvalSignals: ["::HUMAN.APPROVE"],
+        };
+        return {
+          ...base,
+          human: {
+            prompt: human.prompt,
+            approvalSignals: human.approvalSignals ?? [],
+            ...(human.assignTo ? { assignTo: human.assignTo } : {}),
+            ...(human.timeoutMs != null ? { timeoutMs: human.timeoutMs } : {}),
+            ...(human.onTimeout ? { onTimeout: human.onTimeout } : {}),
+          },
+        };
+      }
       case "START":
         return {
           ...base,
@@ -330,7 +369,12 @@ export function lintCanvas(
     issues.push(issue("warning", "MISSING_END", "Missing END state."));
   }
 
-  const targetIds = new Set(edges.map((e) => e.target));
+  const flowEdges = edges.filter((e) => {
+    const kind = normalizeEdgeData(e.data, e.source, e.target).kind;
+    return kind !== "router";
+  });
+
+  const targetIds = new Set(flowEdges.map((e) => e.target));
   for (const n of nodes) {
     if (n.data.stateType !== "START" && !targetIds.has(n.id)) {
       issues.push(
@@ -344,7 +388,7 @@ export function lintCanvas(
     }
   }
 
-  const sourceIds = new Set(edges.map((e) => e.source));
+  const sourceIds = new Set(flowEdges.map((e) => e.source));
   for (const n of nodes) {
     if (n.data.stateType !== "END" && !sourceIds.has(n.id)) {
       issues.push(
@@ -359,12 +403,12 @@ export function lintCanvas(
   }
 
   const runnable = nodes.filter((n) =>
-    ["SCRIPT", "AI", "SPAWN", "HTTP", "VALIDATE", "EXTERNAL_AI"].includes(
+    ["SCRIPT", "AI", "SPAWN", "HTTP", "VALIDATE", "EXTERNAL_AI", "HUMAN"].includes(
       n.data.stateType
     )
   );
   for (const n of runnable) {
-    const outs = edges.filter((e) => e.source === n.id);
+    const outs = flowEdges.filter((e) => e.source === n.id);
     const hasErrorEdge = outs.some((e) =>
       ERROR_SIGNAL_HINT.test(e.data?.signal ?? "")
     );
@@ -377,6 +421,41 @@ export function lintCanvas(
           n.id
         )
       );
+    }
+  }
+
+  for (const e of edges) {
+    const data = normalizeEdgeData(e.data, e.source, e.target);
+    if (data.kind === "self-loop") {
+      if (e.source !== e.target) {
+        issues.push(
+          issue(
+            "error",
+            "SELF_LOOP_INVALID_TARGET",
+            `Edge ${e.id}: self-loop kind requires source === target.`,
+            e.source
+          )
+        );
+      }
+      if (data.maxIterations == null || data.maxIterations < 1) {
+        issues.push(
+          issue(
+            "error",
+            "SELF_LOOP_MISSING_MAX_ITER",
+            `Edge ${e.id}: self-loop requires maxIterations ≥ 1.`,
+            e.source
+          )
+        );
+      } else if (data.maxIterations > 100) {
+        issues.push(
+          issue(
+            "warning",
+            "SELF_LOOP_HIGH_MAX_ITER",
+            `Edge ${e.id}: maxIterations=${data.maxIterations} is very large.`,
+            e.source
+          )
+        );
+      }
     }
   }
 
@@ -437,6 +516,103 @@ export function lintCanvas(
           )
         );
       }
+    }
+
+    if (spawn.aggregateTo) {
+      const target = nodes.find((x) => x.id === spawn.aggregateTo);
+      if (!target) {
+        issues.push(
+          issue(
+            "error",
+            "SPAWN_AGGREGATE_TARGET_INVALID",
+            `SPAWN "${n.data.label}": aggregateTo "${spawn.aggregateTo}" does not exist.`,
+            n.id
+          )
+        );
+      } else if (target.data.stateType !== "AGGREGATE") {
+        issues.push(
+          issue(
+            "error",
+            "SPAWN_AGGREGATE_TARGET_INVALID",
+            `SPAWN "${n.data.label}": aggregateTo must target an AGGREGATE state (got ${target.data.stateType}).`,
+            n.id
+          )
+        );
+      }
+    }
+  }
+
+  // SPAWN ↔ AGGREGATE 1:1 pairing (§10.3)
+  const spawnByAggregate = new Map<string, string[]>();
+  for (const n of nodes.filter((x) => x.data.stateType === "SPAWN")) {
+    const to = normalizeSpawn(n.data.spawn).aggregateTo;
+    if (!to) continue;
+    const list = spawnByAggregate.get(to) ?? [];
+    list.push(n.id);
+    spawnByAggregate.set(to, list);
+  }
+  for (const [aggId, spawnIds] of spawnByAggregate) {
+    if (spawnIds.length > 1) {
+      issues.push(
+        issue(
+          "error",
+          "AGGREGATE_MULTIPLE_SPAWN",
+          `AGGREGATE "${aggId}" is claimed by multiple SPAWN nodes (${spawnIds.join(", ")}).`,
+          aggId
+        )
+      );
+    }
+  }
+  for (const n of nodes.filter((x) => x.data.stateType === "AGGREGATE")) {
+    const aggregate = normalizeAggregate(n.data.aggregate);
+    const claimants = spawnByAggregate.get(n.id) ?? [];
+    if (aggregate.fromSpawnId) {
+      const spawnNode = nodes.find((x) => x.id === aggregate.fromSpawnId);
+      if (!spawnNode || spawnNode.data.stateType !== "SPAWN") {
+        issues.push(
+          issue(
+            "error",
+            "AGGREGATE_SPAWN_MISMATCH",
+            `AGGREGATE "${n.data.label}": fromSpawnId "${aggregate.fromSpawnId}" is not a SPAWN node.`,
+            n.id
+          )
+        );
+      } else {
+        const spawn = normalizeSpawn(spawnNode.data.spawn);
+        if (spawn.aggregateTo !== n.id) {
+          issues.push(
+            issue(
+              "error",
+              "AGGREGATE_SPAWN_MISMATCH",
+              `AGGREGATE "${n.data.label}": fromSpawnId does not point back via SPAWN.aggregateTo.`,
+              n.id
+            )
+          );
+        }
+        if (
+          spawn.strategy !== aggregate.strategy &&
+          claimants.includes(aggregate.fromSpawnId)
+        ) {
+          issues.push(
+            issue(
+              "warning",
+              "AGGREGATE_STRATEGY_MISMATCH",
+              `AGGREGATE "${n.data.label}": strategy differs from paired SPAWN.`,
+              n.id
+            )
+          );
+        }
+      }
+    } else if (claimants.length === 1) {
+      // soft: back-ref missing but forward ref exists
+      issues.push(
+        issue(
+          "warning",
+          "AGGREGATE_SPAWN_MISMATCH",
+          `AGGREGATE "${n.data.label}": set fromSpawnId to "${claimants[0]}" to complete the 1:1 pairing.`,
+          n.id
+        )
+      );
     }
   }
 
@@ -545,12 +721,120 @@ export function lintCanvas(
         )
       );
     }
+
+    const verify = n.data.verify;
+    if (!verify || !verify.kind) {
+      issues.push(
+        issue(
+          "error",
+          "VALIDATE_MISSING_VERIFY",
+          `VALIDATE "${n.data.label}": verify is required (executor-less gate).`,
+          n.id
+        )
+      );
+    } else if (
+      verify.kind === "script" &&
+      !(verify.scriptRef && verify.scriptRef.trim())
+    ) {
+      issues.push(
+        issue(
+          "error",
+          "VALIDATE_MISSING_VERIFY",
+          `VALIDATE "${n.data.label}": verify.scriptRef is required when kind is script.`,
+          n.id
+        )
+      );
+    }
+
+    const hasExecutorBody =
+      Boolean(n.data.script?.code?.trim()) ||
+      Boolean(n.data.ai?.systemPrompt?.trim()) ||
+      Boolean(n.data.externalAi?.systemPrompt?.trim()) ||
+      Boolean(n.data.http?.bodyTemplate?.trim());
+    if (hasExecutorBody) {
+      issues.push(
+        issue(
+          "error",
+          "VALIDATE_HAS_EXECUTOR",
+          `VALIDATE "${n.data.label}": must not define script/ai/http/externalAi executor bodies.`,
+          n.id
+        )
+      );
+    }
   }
 
-  // C2 — SYS_FUNC enable map / rewire lint
+  for (const n of nodes.filter((x) => x.data.stateType === "HUMAN")) {
+    const human = n.data.human;
+    if (!human?.prompt?.trim()) {
+      issues.push(
+        issue(
+          "warning",
+          "HUMAN_EMPTY_PROMPT",
+          `HUMAN "${n.data.label}": prompt is empty.`,
+          n.id
+        )
+      );
+    }
+    if (!human?.approvalSignals?.length) {
+      issues.push(
+        issue(
+          "error",
+          "HUMAN_NO_APPROVAL_SIGNALS",
+          `HUMAN "${n.data.label}": approvalSignals must not be empty.`,
+          n.id
+        )
+      );
+    }
+  }
+
+  // C2 — SYS_FUNC enable map / rewire lint + C7 router heads
   for (const n of nodes.filter((x) => x.data.stateType === "SYSTEM_FUNCTION")) {
-    const mask = n.data.systemFunction;
+    const mask = normalizeSystemFunction(n.data.systemFunction);
     const label = n.data.label;
+
+    if (mask.heads.length < 2) {
+      issues.push(
+        issue(
+          "warning",
+          "SYSFUNC_FEW_HEADS",
+          `SYS_FUNC "${label}": router should have ≥ 2 heads (has ${mask.heads.length}).`,
+          n.id
+        )
+      );
+    }
+    if (mask.heads.length > SYSFUNC_HEADS_WARN_THRESHOLD) {
+      issues.push(
+        issue(
+          "warning",
+          "SYSFUNC_MANY_HEADS",
+          `SYS_FUNC "${label}": ${mask.heads.length} heads may hurt canvas legibility.`,
+          n.id
+        )
+      );
+    }
+    for (const head of mask.heads) {
+      if (head.componentRef && !nodeIds.has(head.componentRef)) {
+        // Allow external refs that look non-state (no S… pattern) — only error if it looks like a state id that is missing
+        // Per §10.2: componentRef may be stateId OR external. Error only when ref matches no node AND isn't empty.
+        // External refs (credentials/services) are allowed when they don't collide with missing node expectation —
+        // treat unresolved as error only when the ref equals a deleted-looking canvas id OR when it's intended as state.
+        // Spec: "error if a head's componentRef doesn't resolve" — resolve = node id OR external string with ":" / "ext:"
+        const looksExternal =
+          head.componentRef.includes(":") ||
+          head.componentRef.startsWith("ext-") ||
+          head.componentRef.startsWith("cred-");
+        if (!looksExternal) {
+          issues.push(
+            issue(
+              "error",
+              "SYSFUNC_HEAD_UNRESOLVED",
+              `SYS_FUNC "${label}": head "${head.label}" componentRef "${head.componentRef}" does not resolve.`,
+              n.id
+            )
+          );
+        }
+      }
+    }
 
     for (const r of mask.rewire) {
       if (r.to && !nodeIds.has(r.to)) {
@@ -595,7 +879,7 @@ export function lintCanvas(
     // Mask drops all error-routing edges of a still-enabled runnable state
     for (const r of runnable) {
       if (isStateDisabledByMask(r.id, mask)) continue;
-      const errorEdges = edges.filter(
+      const errorEdges = flowEdges.filter(
         (e) =>
           e.source === r.id && ERROR_SIGNAL_HINT.test(e.data?.signal ?? "")
       );

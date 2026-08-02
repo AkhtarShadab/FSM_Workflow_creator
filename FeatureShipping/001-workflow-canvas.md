@@ -1,6 +1,6 @@
 # 001 — Workflow Canvas
 
-> Status: **Complete (authoring + engine)** — C1–C6 on `cursor/canvas-c2-sysfunc-map` (AI/HTTP executors still stubbed; gRPC bridge deferred)  
+> Status: **Complete (v1 C1–C6 + v2 C7 Round 2)** on `cursor/canvas-c7-round2` — AI/HTTP executors still stubbed; gRPC bridge deferred; live HUMAN bridge stubbed as auto-approve  
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §§2, 5–7, 9–10  
 > Code today: [`apps/web/src/lib/fsm-types.ts`](../apps/web/src/lib/fsm-types.ts), canvas + inspector under `apps/web/src/components/`, engine [`packages/fsm-engine/`](../packages/fsm-engine/)  
 > Implement with: **ship-feature** on Composer/Grok · Detail updates: **detail-feature** on high-end models
@@ -54,14 +54,14 @@ The FSM authoring concept is strong, but the canvas still feels vague for develo
 | `SCRIPT` | Deterministic native tool | `SCRIPT` | gRPC tool |
 | `AI` | Generative reasoning | `AI` | BYOK model select |
 | `EXTERNAL_AI` | Hit a non-platform AI endpoint | **new** | Distinct from in-app BYOK pool usage |
-| `VALIDATE` | Assert schema / predicate | **new** | Gate before next hop |
+| `VALIDATE` | Assert schema / predicate | **new** | Gate before next hop — ⚠ redundancy under review, see §10.1 |
 | `BRANCH` | Explicit multi-way on tool payload | pattern on edges | Tool emits which allowlisted signal |
-| `SPAWN` | Fan-out child FSMs | `SPAWN` | See §3.8 |
-| `AGGREGATE` | Merge child results | `AGGREGATE` | Typed envelope |
-| `SYSTEM_FUNCTION` | Checkpoint + enablement mask | `SYSTEM_FUNCTION` | See §3.4 |
+| `SPAWN` | Fan-out child FSMs | `SPAWN` | See §3.8 — ⚠ cardinality contract being formalized, see §10.3 |
+| `AGGREGATE` | Merge child results | `AGGREGATE` | Typed envelope — ⚠ cardinality contract being formalized, see §10.3 |
+| `SYSTEM_FUNCTION` | Checkpoint + enablement mask | `SYSTEM_FUNCTION` | See §3.4 — ⚠ being reframed as a multi-head router, see §10.2 |
 | `ERR` | Shared error sink | often `END` subtype | Prefer dedicated or tagged `END` |
 | `END` | Terminal success | `END` | |
-| `HUMAN` | Pause for approval | **later** | Out of v1 ship |
+| `HUMAN` | Pause for approval | **later** | Promoted into v2 scope, see §10.4 |
 
 UI palette should group: **Flow** (START/END/ERR), **Work** (SCRIPT/HTTP/AI/EXTERNAL_AI/VALIDATE), **Control** (SYS_FUNC/SPAWN/AGGREGATE).
 
@@ -330,11 +330,13 @@ Reference UI today: [`fsm-canvas.tsx`](../apps/web/src/components/canvas/fsm-can
 | C4 | HTTP + VALIDATE + EXTERNAL_AI + grouped Flow/Work/Control palette | **Done** |
 | C5 | `@fsm/engine`: tool-chained resolver + async spawn pool + `/api/projects/:id/runs` | **Done** (AI/HTTP executors stubbed) |
 | C6 | Custom state/signal/SYS_FUNC registry + hard unknown-signal lint | **Done** |
+| C7 | Round 2: VALIDATE tighten, SYS_FUNC router heads, SPAWN↔AGGREGATE 1:1, HUMAN + self-loops, edge kinds + uncapped conditions | **Done** |
 
 ### Remaining deferred (out of Feature 1 authoring scope)
 
 - Live provider gateway for AI/EXTERNAL_AI (keys still client-stub; AES server storage §14).
 - gRPC native SCRIPT bridge; `worker_threads` upgrade for SPAWN.
+- Live HUMAN approval bridge (C7 stubs auto-`::HUMAN.APPROVE` in platform runs).
 
 Detail/revise this doc with **detail-feature** (high-end) only.
 
@@ -352,3 +354,47 @@ Detail/revise this doc with **detail-feature** (high-end) only.
 - [x] SYS_FUNC enable/disable + rewire + severity lint. *(C2)*
 - [x] HTTP / VALIDATE / EXTERNAL_AI authoring + grouped palette. *(C4)*
 - [x] Engine run API writes events for START→…→END walks. *(C5)*
+- [x] VALIDATE lint rejects executor bodies; SYS_FUNC heads emit + lint; SPAWN/AGGREGATE pairing lint; HUMAN + self-loop kinds. *(C7)*
+
+---
+
+## 10. Round 2 — C7 (decisions locked to §10.6 defaults)
+
+Five modeling concerns from discussion — **shipped in C7** using the defaults from §10.6:
+
+| # | Decision | Locked |
+|---|----------|--------|
+| 1 | Keep `VALIDATE` (tightened) vs. `gateOnly` flag | **Keep, tightened** |
+| 2 | Max `RouterHead`s | **Unbounded; warn past 8** |
+| 3 | `HUMAN` as router head target | **Yes** |
+| 4 | SPAWN `X` static vs dynamic | **Static** |
+| 5 | Self-loop `maxIterations` default | **3** |
+
+### 10.1 `VALIDATE` — keep and tighten
+
+- Executor-less by construction: lint `VALIDATE_HAS_EXECUTOR` if script/ai/http/externalAi bodies are populated.
+- `verify` required: `VALIDATE_MISSING_VERIFY` when missing / incomplete script verify.
+- Existing `VALIDATE_INCOMPLETE` still covers schema/predicate fields.
+
+### 10.2 `SYSTEM_FUNCTION` as router
+
+- `RouterHead[]` on `SystemFunctionConfig` (`heads`); canvas renders per-head handles; inspector **Heads** table.
+- Lint: `SYSFUNC_FEW_HEADS` (&lt;2), `SYSFUNC_MANY_HEADS` (&gt;8), `SYSFUNC_HEAD_UNRESOLVED`.
+
+### 10.3 SPAWN 1→X / AGGREGATE X→1
+
+- `AggregateConfig { fromSpawnId, strategy }`; chips show `1→X` / `← X from SPAWN`.
+- Lint: `SPAWN_AGGREGATE_TARGET_INVALID`, `AGGREGATE_MULTIPLE_SPAWN`, `AGGREGATE_SPAWN_MISMATCH`.
+
+### 10.4 `HUMAN` + self-loops
+
+- New `HUMAN` state + `HumanConfig`; `::HUMAN.*` signals.
+- `TransitionEdgeKind`: `transition` | `self-loop` | `router`; self-loops default `maxIterations: 3`.
+- Engine enforces self-loop cap separately from `guardrails.retryMax`.
+
+### 10.5 Uncapped conditions + distinct edge kinds
+
+- Inspector **Conditions** card adds/removes unlimited `transition` edges.
+- Router / self-loop edges use distinct dash styles and are excluded from some reachability/error-edge checks (`router` edges skipped for UNREACHABLE/DEAD_END/MISSING_ERROR_EDGE).
+
+Once further revisions arise, extend with a new phase rather than reopening C1–C6.

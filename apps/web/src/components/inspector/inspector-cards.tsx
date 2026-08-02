@@ -31,15 +31,21 @@ import type {
 import {
   defaultExternalAiConfig,
   defaultHttpConfig,
+  defaultHumanConfig,
+  defaultRouterHead,
   defaultValidateConfig,
+  normalizeAggregate,
   normalizeSpawn,
+  normalizeSystemFunction,
   primaryProfile,
 } from "@/lib/fsm-types";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useScriptTemplateStore } from "@/stores/script-template-store";
+import { useCanvasStore } from "@/stores/canvas-store";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
+import { DEFAULT_SIGNALS } from "@/lib/fsm-types";
 
 const LANGUAGE_EXTENSIONS = {
   python: [python()],
@@ -960,12 +966,16 @@ export function HttpCard({ node, patch }: CardProps) {
   );
 }
 
-/** VALIDATE state inspector */
+/** VALIDATE state inspector — executor-less gate (§10.1) */
 export function ValidateCard({ node, patch }: CardProps) {
   const v = node.data.validate ?? defaultValidateConfig();
   return (
     <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-foreground">Validation</h3>
+      <h3 className="mb-1 text-sm font-semibold text-foreground">Validation</h3>
+      <p className="mb-3 text-[10px] text-muted-foreground">
+        Executor-less gate. Configure verify below (required). Do not attach
+        script/AI/HTTP bodies.
+      </p>
       <div className="space-y-3">
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Kind</Label>
@@ -1015,6 +1025,266 @@ export function ValidateCard({ node, patch }: CardProps) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** HUMAN approval state (§10.4) */
+export function HumanCard({ node, patch }: CardProps) {
+  const human = node.data.human ?? defaultHumanConfig();
+  const patchHuman = (partial: Partial<typeof human>) =>
+    patch({ human: { ...human, ...partial } });
+
+  return (
+    <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
+      <h3 className="mb-3 text-sm font-semibold text-foreground">Human approval</h3>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Prompt</Label>
+          <Textarea
+            value={human.prompt}
+            onChange={(e) => patchHuman({ prompt: e.target.value })}
+            className="min-h-[72px] border-foreground/10 bg-foreground/5 text-xs"
+            data-testid="human-prompt"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            Approval signals (comma-separated)
+          </Label>
+          <Input
+            value={(human.approvalSignals ?? []).join(", ")}
+            onChange={(e) =>
+              patchHuman({
+                approvalSignals: e.target.value
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              })
+            }
+            className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Assign to</Label>
+          <Input
+            value={human.assignTo ?? ""}
+            onChange={(e) => patchHuman({ assignTo: e.target.value })}
+            className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+            placeholder="role or user ref"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Timeout (ms)</Label>
+          <Input
+            type="number"
+            value={human.timeoutMs ?? ""}
+            onChange={(e) =>
+              patchHuman({
+                timeoutMs: e.target.value ? Number(e.target.value) : undefined,
+              })
+            }
+            className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** AGGREGATE pairing card (§10.3) */
+export function AggregateCard({
+  node,
+  patch,
+  allNodes,
+  projectId,
+}: CardProps & { allNodes: StateNode[]; projectId: string }) {
+  const aggregate = normalizeAggregate(node.data.aggregate);
+  const spawns = allNodes.filter((n) => n.data.stateType === "SPAWN");
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const patchAgg = (partial: Partial<typeof aggregate>) =>
+    patch({ aggregate: { ...aggregate, ...partial } });
+
+  return (
+    <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
+      <h3 className="mb-1 text-sm font-semibold text-foreground">
+        Aggregate (X→1)
+      </h3>
+      <p className="mb-3 text-[10px] text-muted-foreground">
+        Pair with exactly one SPAWN via fromSpawnId. SPAWN.aggregateTo must
+        point back here.
+      </p>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">From SPAWN</Label>
+          <Select
+            value={aggregate.fromSpawnId || undefined}
+            onValueChange={(v) => {
+              if (typeof v !== "string" || !v) return;
+              const spawn = spawns.find((s) => s.id === v);
+              const strategy = spawn
+                ? normalizeSpawn(spawn.data.spawn).strategy
+                : aggregate.strategy;
+              patchAgg({ fromSpawnId: v, strategy });
+              if (spawn) {
+                updateNodeData(projectId, spawn.id, {
+                  spawn: {
+                    ...normalizeSpawn(spawn.data.spawn),
+                    aggregateTo: node.id,
+                  },
+                });
+              }
+            }}
+          >
+            <SelectTrigger
+              className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+              data-testid="aggregate-from-spawn"
+            >
+              <SelectValue placeholder="Select SPAWN" />
+            </SelectTrigger>
+            <SelectContent className="border-foreground/10 bg-popover text-foreground">
+              {spawns.map((s) => (
+                <SelectItem key={s.id} value={s.id} className="text-xs">
+                  {s.data.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Strategy</Label>
+          <Select
+            value={aggregate.strategy}
+            onValueChange={(v) => {
+              if (
+                v === "waitAll" ||
+                v === "quorum" ||
+                v === "firstSuccess"
+              ) {
+                patchAgg({ strategy: v });
+              }
+            }}
+          >
+            <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-foreground/10 bg-popover text-foreground">
+              <SelectItem value="waitAll">waitAll</SelectItem>
+              <SelectItem value="quorum">quorum</SelectItem>
+              <SelectItem value="firstSuccess">firstSuccess</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Uncapped outgoing conditions (transition kind only) — §10.5 */
+export function ConditionsCard({
+  node,
+  allNodes,
+  allEdges,
+  projectId,
+}: {
+  node: StateNode;
+  allNodes: StateNode[];
+  allEdges: TransitionEdge[];
+  projectId: string;
+}) {
+  const addTransition = useCanvasStore((s) => s.addTransition);
+  const removeEdge = useCanvasStore((s) => s.removeEdge);
+  const updateEdgeSignal = useCanvasStore((s) => s.updateEdgeSignal);
+
+  const conditions = allEdges.filter(
+    (e) =>
+      e.source === node.id &&
+      (e.data?.kind ?? "transition") === "transition"
+  );
+  const targets = allNodes.filter((n) => n.id !== node.id);
+
+  return (
+    <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Conditions</h3>
+          <p className="text-[10px] text-muted-foreground">
+            Unlimited transition conditions. Self-loops and router heads are
+            edited separately.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-2 text-xs"
+          data-testid="conditions-add"
+          onClick={() => {
+            const target = targets[0]?.id ?? node.id;
+            addTransition(
+              projectId,
+              node.id,
+              target,
+              DEFAULT_SIGNALS[node.data.stateType] ?? "::SCRIPT.NEXT"
+            );
+          }}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add
+        </Button>
+      </div>
+      {conditions.length === 0 ? (
+        <p className="text-[10px] text-muted-foreground">No transition conditions yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {conditions.map((e) => (
+            <div
+              key={e.id}
+              className="grid grid-cols-[1fr_1fr_auto] gap-1.5"
+              data-testid={`condition-row-${e.id}`}
+            >
+              <Input
+                value={String(e.data?.signal ?? "")}
+                onChange={(ev) =>
+                  updateEdgeSignal(projectId, e.id, ev.target.value)
+                }
+                className="h-7 border-foreground/10 bg-foreground/5 font-mono text-[10px]"
+              />
+              <Select
+                value={e.target}
+                onValueChange={(v) => {
+                  if (typeof v !== "string" || !v) return;
+                  // Replace edge with new target via remove + add
+                  const signal = String(e.data?.signal ?? "::SCRIPT.NEXT");
+                  removeEdge(projectId, e.id);
+                  addTransition(projectId, node.id, v, signal);
+                }}
+              >
+                <SelectTrigger className="h-7 border-foreground/10 bg-foreground/5 text-[10px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                  {allNodes.map((t) => (
+                    <SelectItem key={t.id} value={t.id} className="text-xs">
+                      {t.data.label}
+                      {t.id === node.id ? " (self)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-red-300"
+                onClick={() => removeEdge(projectId, e.id)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1107,7 +1377,7 @@ export function SystemFunctionCard({
   allNodes,
   allEdges,
 }: SystemFunctionCardProps) {
-  const sf = node.data.systemFunction;
+  const sf = normalizeSystemFunction(node.data.systemFunction);
   const otherStates = allNodes.filter((n) => n.id !== node.id);
   const conflictIds = sf.enabledStateIds.filter((id) =>
     sf.disabledStateIds.includes(id)
@@ -1152,8 +1422,127 @@ export function SystemFunctionCard({
           </Select>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          Dehydrate → Mask Swap → Hydrate runs at this boundary (§7.2).
+          Dehydrate → Mask Swap → Hydrate runs at this boundary (§7.2). Router
+          heads attach components; enable map still controls the mask.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Heads</h3>
+            <p className="text-[10px] text-muted-foreground">
+              One head per attached component (router topology).
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs"
+            data-testid="sysfunc-head-add"
+            onClick={() =>
+              patchSf({
+                heads: [
+                  ...sf.heads,
+                  defaultRouterHead({
+                    id: `head-${Date.now().toString(36)}`,
+                    label: `Head ${sf.heads.length + 1}`,
+                    direction: "out",
+                    componentRef: otherStates[0]?.id ?? "",
+                  }),
+                ],
+              })
+            }
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add head
+          </Button>
+        </div>
+        {sf.heads.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground">
+            No heads yet — add at least two for a proper router.
+          </p>
+        ) : (
+          <div className="space-y-2" data-testid="sysfunc-heads-table">
+            {sf.heads.map((head, idx) => (
+              <div
+                key={head.id}
+                className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5"
+              >
+                <Input
+                  value={head.label}
+                  onChange={(e) => {
+                    const next = sf.heads.map((h, i) =>
+                      i === idx ? { ...h, label: e.target.value } : h
+                    );
+                    patchSf({ heads: next });
+                  }}
+                  className="h-7 border-foreground/10 bg-foreground/5 text-[10px]"
+                  placeholder="label"
+                />
+                <Select
+                  value={head.direction}
+                  onValueChange={(v) => {
+                    if (
+                      v !== "in" &&
+                      v !== "out" &&
+                      v !== "bidirectional"
+                    )
+                      return;
+                    const next = sf.heads.map((h, i) =>
+                      i === idx ? { ...h, direction: v } : h
+                    );
+                    patchSf({ heads: next });
+                  }}
+                >
+                  <SelectTrigger className="h-7 border-foreground/10 bg-foreground/5 text-[10px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                    <SelectItem value="in">in</SelectItem>
+                    <SelectItem value="out">out</SelectItem>
+                    <SelectItem value="bidirectional">bidirectional</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={head.componentRef || undefined}
+                  onValueChange={(v) => {
+                    if (typeof v !== "string" || !v) return;
+                    const next = sf.heads.map((h, i) =>
+                      i === idx ? { ...h, componentRef: v } : h
+                    );
+                    patchSf({ heads: next });
+                  }}
+                >
+                  <SelectTrigger className="h-7 border-foreground/10 bg-foreground/5 text-[10px]">
+                    <SelectValue placeholder="component" />
+                  </SelectTrigger>
+                  <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                    {otherStates.map((s) => (
+                      <SelectItem key={s.id} value={s.id} className="text-xs">
+                        {s.data.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-red-300"
+                  onClick={() =>
+                    patchSf({
+                      heads: sf.heads.filter((_, i) => i !== idx),
+                    })
+                  }
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">

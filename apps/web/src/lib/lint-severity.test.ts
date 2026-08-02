@@ -82,6 +82,7 @@ describe("lintCanvas C2 SYS_FUNC mask", () => {
             enabledStateIds: [],
             disabledStateIds: ["SC1", "END"],
             rewire: [],
+            heads: [],
           },
         }),
         node("END", "END"),
@@ -115,6 +116,7 @@ describe("lintCanvas C2 SYS_FUNC mask", () => {
             enabledStateIds: [],
             disabledStateIds: [],
             rewire: [{ from: "S0", on: "::SCRIPT.NEXT", to: "MISSING" }],
+            heads: [],
           },
         }),
         node("END", "END"),
@@ -139,6 +141,7 @@ describe("lintCanvas C2 SYS_FUNC mask", () => {
       enabledStateIds: [],
       disabledStateIds: ["SC1"],
       rewire: [{ from: "S0", on: "::SCRIPT.NEXT", to: "END" }],
+      heads: [],
     };
     const nodes = [
       node("S0", "START"),
@@ -174,6 +177,7 @@ describe("lintCanvas C2 SYS_FUNC mask", () => {
             enabledStateIds: ["S0", "END", "SF1"],
             disabledStateIds: [],
             rewire: [{ from: "S0", on: "::AI.NEXT", to: "END" }],
+            heads: [],
           },
         }),
         node("END", "END"),

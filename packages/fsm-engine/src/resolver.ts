@@ -5,6 +5,8 @@ export interface EngineEdge {
   from: string;
   on: string;
   to: string;
+  kind?: "transition" | "self-loop" | "router";
+  maxIterations?: number;
 }
 
 export interface EngineMask {

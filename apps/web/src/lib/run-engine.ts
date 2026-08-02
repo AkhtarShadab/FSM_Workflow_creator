@@ -68,6 +68,8 @@ function canvasToEngine(canvas: CanvasData): {
     from: e.source,
     on: e.data?.signal ?? "::SCRIPT.NEXT",
     to: e.target,
+    kind: e.data?.kind,
+    maxIterations: e.data?.maxIterations,
   }));
 
   return { states, edges };
@@ -92,6 +94,9 @@ async function stubExecute(args: {
       return "::AI.NEXT";
     case "EXTERNAL_AI":
       return "::EXTERNAL_AI.NEXT";
+    case "HUMAN":
+      // Stub: auto-approve in platform runs until live human bridge lands
+      return "::HUMAN.APPROVE";
     case "AGGREGATE":
       return "::SCRIPT.NEXT";
     case "SYSTEM_FUNCTION":

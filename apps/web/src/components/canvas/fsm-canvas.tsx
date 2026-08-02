@@ -91,6 +91,11 @@ export function FsmCanvas({
     [onConnect, projectId]
   );
 
+  const isValidConnection = useCallback((connection: Connection | TransitionEdge) => {
+    // Explicitly allow self-loops (§10.4); all other connections remain valid.
+    return Boolean(connection.source && connection.target);
+  }, []);
+
   return (
     <div className="relative h-full w-full">
       <ReactFlow
@@ -101,6 +106,7 @@ export function FsmCanvas({
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
+        isValidConnection={isValidConnection}
         onNodeClick={(_, node) => selectNode(node.id)}
         onEdgeClick={(_, edge) => selectEdge(edge.id)}
         onPaneClick={() => {

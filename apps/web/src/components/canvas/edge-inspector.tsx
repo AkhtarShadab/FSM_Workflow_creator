@@ -5,6 +5,7 @@ import { Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,8 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const target = nodes.find((n) => n.id === edge.target);
   const currentSignal = String(edge.data?.signal ?? "");
   const currentKind = (edge.type ?? "script") as EdgeKind;
+  const topologyKind = edge.data?.kind ?? "transition";
+  const updateEdgeData = useCanvasStore((s) => s.updateEdgeData);
 
   return (
     <aside className="absolute top-4 right-4 bottom-4 z-20 w-[min(380px,92vw)]">
@@ -64,7 +67,7 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
             variant="outline"
             className={cn("font-mono text-[10px] tracking-widest", KIND_STYLES[currentKind].badge)}
           >
-            TRANSITION
+            {String(topologyKind).toUpperCase()}
           </Badge>
           <div className="flex items-center gap-1">
             <Button
@@ -105,6 +108,31 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
               <h3 className="mb-2 text-sm font-semibold text-foreground">
                 Signal (§6.1)
               </h3>
+              {topologyKind === "router" ? (
+                <p className="mb-2 text-[10px] text-muted-foreground">
+                  Router edges are structural wiring — edit SYS_FUNC heads for
+                  topology; signal still labels the wire.
+                </p>
+              ) : null}
+              {topologyKind === "self-loop" ? (
+                <div className="mb-3 space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Max iterations
+                  </Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={edge.data?.maxIterations ?? 3}
+                    onChange={(e) =>
+                      updateEdgeData(projectId, edge.id, {
+                        maxIterations: Math.max(1, Number(e.target.value) || 1),
+                      })
+                    }
+                    className="h-9 border-foreground/10 bg-foreground/5 text-xs"
+                    data-testid="self-loop-max-iter"
+                  />
+                </div>
+              ) : null}
               <div className="space-y-1.5">
                 {SIGNAL_PRESETS.map(({ signal, kind, hint }) => (
                   <button

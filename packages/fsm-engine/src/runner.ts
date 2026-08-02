@@ -67,6 +67,8 @@ export async function runFsm(args: {
   let activeMask: EngineMask | null = null;
   let aggregate: ChildEnvelope[] | undefined;
   const maxSteps = args.maxSteps ?? 100;
+  /** Per self-loop edge key → iteration count (§10.4) */
+  const selfLoopCounts = new Map<string, number>();
 
   for (let step = 0; step < maxSteps; step++) {
     const state = byId.get(currentId);
@@ -161,6 +163,31 @@ export async function runFsm(args: {
         aggregate,
         error: resolved.message,
       };
+    }
+
+    const matchedEdge = args.edges.find(
+      (e) =>
+        e.from === state.id &&
+        e.on === resolved.signal &&
+        e.to === resolved.to
+    );
+    if (
+      matchedEdge &&
+      (matchedEdge.kind === "self-loop" || matchedEdge.from === matchedEdge.to)
+    ) {
+      const key = `${matchedEdge.from}|${matchedEdge.on}|${matchedEdge.to}`;
+      const next = (selfLoopCounts.get(key) ?? 0) + 1;
+      selfLoopCounts.set(key, next);
+      const cap = matchedEdge.maxIterations ?? 3;
+      if (next > cap) {
+        return {
+          status: "failed",
+          events,
+          finalStateId: state.id,
+          aggregate,
+          error: `Self-loop exceeded maxIterations=${cap} on ${key}`,
+        };
+      }
     }
 
     payload = resolved.payload;
