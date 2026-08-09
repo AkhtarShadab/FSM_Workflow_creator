@@ -11,13 +11,16 @@ import {
 } from "@xyflow/react";
 import {
   defaultNodeData,
+  DEFAULT_SELF_LOOP_MAX_ITERATIONS,
   DEFAULT_SIGNALS,
   edgeTypeForSignal,
+  normalizeEdgeData,
   type CanvasData,
   type FSMStateType,
   type StateNode,
   type StateNodeData,
   type TransitionEdge,
+  type TransitionEdgeData,
 } from "@/lib/fsm-types";
 
 let counter = 0;
@@ -53,6 +56,17 @@ interface CanvasStore {
     patch: Partial<StateNodeData>
   ) => void;
   updateEdgeSignal: (projectId: string, edgeId: string, signal: string) => void;
+  updateEdgeData: (
+    projectId: string,
+    edgeId: string,
+    patch: Partial<TransitionEdgeData>
+  ) => void;
+  addTransition: (
+    projectId: string,
+    source: string,
+    target: string,
+    signal: string
+  ) => void;
   removeEdge: (projectId: string, edgeId: string) => void;
 
   onNodesChange: (projectId: string, changes: NodeChange<StateNode>[]) => void;
@@ -142,10 +156,65 @@ export const useCanvasStore = create<CanvasStore>()(
                     ...e,
                     type: edgeTypeForSignal(signal),
                     label: signal,
-                    data: { ...e.data, signal },
+                    data: normalizeEdgeData(
+                      { ...e.data, signal },
+                      e.source,
+                      e.target
+                    ),
                   }
                 : e
             ),
+          });
+        }),
+
+      updateEdgeData: (projectId, edgeId, patch) =>
+        set((state) => {
+          const canvas = state.canvases[projectId] ?? EMPTY;
+          return setCanvas(state, projectId, {
+            ...canvas,
+            edges: canvas.edges.map((e) => {
+              if (e.id !== edgeId) return e;
+              const data = normalizeEdgeData(
+                { ...e.data, ...patch },
+                e.source,
+                e.target
+              );
+              return {
+                ...e,
+                type: edgeTypeForSignal(data.signal),
+                label: data.signal,
+                data,
+              };
+            }),
+          });
+        }),
+
+      addTransition: (projectId, source, target, signal) =>
+        set((state) => {
+          const canvas = state.canvases[projectId] ?? EMPTY;
+          const kind = source === target ? "self-loop" : "transition";
+          const data = normalizeEdgeData(
+            {
+              signal,
+              kind,
+              ...(kind === "self-loop"
+                ? { maxIterations: DEFAULT_SELF_LOOP_MAX_ITERATIONS }
+                : {}),
+            },
+            source,
+            target
+          );
+          const edge: TransitionEdge = {
+            id: `e-${source}-${target}-${Date.now().toString(36)}`,
+            source,
+            target,
+            type: edgeTypeForSignal(signal),
+            data,
+            label: signal,
+          };
+          return setCanvas(state, projectId, {
+            ...canvas,
+            edges: [...canvas.edges, edge],
           });
         }),
 
@@ -183,8 +252,13 @@ export const useCanvasStore = create<CanvasStore>()(
       onConnect: (projectId, connection) =>
         set((state) => {
           const canvas = state.canvases[projectId] ?? EMPTY;
+          if (!connection.source || !connection.target) return state;
+
           const sourceNode = canvas.nodes.find(
             (n) => n.id === connection.source
+          );
+          const targetNode = canvas.nodes.find(
+            (n) => n.id === connection.target
           );
           const signal =
             state.preferredSignal !== "auto"
@@ -193,14 +267,43 @@ export const useCanvasStore = create<CanvasStore>()(
                 ? DEFAULT_SIGNALS[sourceNode.data.stateType]
                 : "::SCRIPT.NEXT";
 
+          const sourceHandle = connection.sourceHandle ?? undefined;
+          const targetHandle = connection.targetHandle ?? undefined;
+          const isSelf = connection.source === connection.target;
+          const isRouterHandle =
+            (sourceHandle &&
+              sourceNode?.data.stateType === "SYSTEM_FUNCTION" &&
+              sourceHandle !== "default-source") ||
+            (targetHandle &&
+              targetNode?.data.stateType === "SYSTEM_FUNCTION" &&
+              targetHandle !== "default-target");
+
+          const kind = isSelf
+            ? "self-loop"
+            : isRouterHandle
+              ? "router"
+              : "transition";
+
+          const data = normalizeEdgeData(
+            {
+              signal,
+              kind,
+              ...(kind === "self-loop"
+                ? { maxIterations: DEFAULT_SELF_LOOP_MAX_ITERATIONS }
+                : {}),
+            },
+            connection.source,
+            connection.target
+          );
+
           const edge: TransitionEdge = {
             id: `e-${connection.source}-${connection.target}-${Date.now().toString(36)}`,
             source: connection.source,
             target: connection.target,
-            sourceHandle: connection.sourceHandle,
-            targetHandle: connection.targetHandle,
+            sourceHandle,
+            targetHandle,
             type: edgeTypeForSignal(signal),
-            data: { signal },
+            data,
             label: signal,
           };
           return setCanvas(state, projectId, {

@@ -42,7 +42,7 @@ Design-status stubs may start as concise **What / How / Why** plus goals and ope
 
 | Doc | Feature | Status |
 |-----|---------|--------|
-| [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents | **Complete** (C1–C7; C1 on `master`, C2–C7 on open PRs) |
+| [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents, engine, registry | **Complete** (C1–C7) — Round 2: SYS_FUNC router heads, SPAWN/AGGREGATE cardinality, HUMAN + self-loops, richer connection kinds |
 | [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | **Detailed** |
 | [003-live-executors.md](003-live-executors.md) | Real AI + HTTP executors streaming into run events | **Design** |
 | [004-harness-export.md](004-harness-export.md) | Export wizard → Docker/Git runnable harness | **Design** |

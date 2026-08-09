@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useTheme } from "next-themes";
 import {
   Background,
@@ -15,14 +15,20 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { useCanvasStore } from "@/stores/canvas-store";
-import type { StateNode, TransitionEdge } from "@/lib/fsm-types";
+import {
+  isStateDisabledByMask,
+  type StateNode,
+  type TransitionEdge,
+} from "@/lib/fsm-types";
 import { StateCircleNode } from "./state-circle-node";
 import { ScriptEdge } from "./script-edge";
 import { AIEdge } from "./ai-edge";
 import { SystemEdge } from "./system-edge";
 import { SpawnEdge } from "./spawn-edge";
 import { CanvasToolbar } from "./canvas-toolbar";
+import { LintPanel } from "./lint-panel";
 import { PencilDefs } from "./pencil-defs";
+import { cn } from "@/lib/utils";
 
 const nodeTypes = { stateCircle: StateCircleNode };
 const edgeTypes = {
@@ -44,6 +50,7 @@ export function FsmCanvas({
 }) {
   const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes) ?? EMPTY_NODES;
   const edges = useCanvasStore((s) => s.canvases[projectId]?.edges) ?? EMPTY_EDGES;
+  const selectedNodeId = useCanvasStore((s) => s.selectedNodeId);
   const onNodesChange = useCanvasStore((s) => s.onNodesChange);
   const onEdgesChange = useCanvasStore((s) => s.onEdgesChange);
   const onConnect = useCanvasStore((s) => s.onConnect);
@@ -51,6 +58,25 @@ export function FsmCanvas({
   const selectEdge = useCanvasStore((s) => s.selectEdge);
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme !== "light";
+
+  const displayNodes = useMemo(() => {
+    const selected = nodes.find((n) => n.id === selectedNodeId);
+    const mask =
+      selected?.data.stateType === "SYSTEM_FUNCTION"
+        ? selected.data.systemFunction
+        : null;
+    if (!mask) return nodes;
+    return nodes.map((n) => {
+      if (n.id === selected?.id) return n;
+      const dimmed = isStateDisabledByMask(n.id, mask);
+      if (!dimmed) return n;
+      return {
+        ...n,
+        className: cn(n.className, "opacity-40 grayscale"),
+        data: { ...n.data, dimmed: true },
+      };
+    });
+  }, [nodes, selectedNodeId]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<StateNode>[]) => onNodesChange(projectId, changes),
@@ -65,16 +91,22 @@ export function FsmCanvas({
     [onConnect, projectId]
   );
 
+  const isValidConnection = useCallback((connection: Connection | TransitionEdge) => {
+    // Explicitly allow self-loops (§10.4); all other connections remain valid.
+    return Boolean(connection.source && connection.target);
+  }, []);
+
   return (
     <div className="relative h-full w-full">
       <ReactFlow
-        nodes={nodes}
+        nodes={displayNodes}
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
+        isValidConnection={isValidConnection}
         onNodeClick={(_, node) => selectNode(node.id)}
         onEdgeClick={(_, edge) => selectEdge(edge.id)}
         onPaneClick={() => {
@@ -87,7 +119,6 @@ export function FsmCanvas({
         proOptions={{ hideAttribution: true }}
         className="bg-[var(--paper)]"
       >
-        {/* Notebook dot grid that pans with the viewport */}
         <Background
           variant={BackgroundVariant.Dots}
           gap={22}
@@ -107,6 +138,7 @@ export function FsmCanvas({
       <PencilDefs />
 
       <CanvasToolbar projectId={projectId} projectName={projectName} />
+      <LintPanel projectId={projectId} />
     </div>
   );
 }
