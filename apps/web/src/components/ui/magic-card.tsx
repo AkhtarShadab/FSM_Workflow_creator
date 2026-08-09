@@ -7,7 +7,7 @@ import {
   useMotionValue,
   useSpring,
 } from "motion/react"
-import { useTheme } from "next-themes"
+import { useTheme } from "@/components/theme-provider"
 
 import { cn } from "@/lib/utils"
 
