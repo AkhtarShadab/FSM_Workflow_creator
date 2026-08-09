@@ -196,6 +196,22 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
     boundCred.models.length > 0 &&
     !boundCred.models.includes(ai.model);
 
+  // Union items carry a composite `credId:modelId` value so that the same
+  // model name exposed by two credentials binds to the correct API key
+  // (credential ids never contain ":", model ids may).
+  const compositeValue =
+    unionModels.length > 0 && ai.model
+      ? (unionModels.find(
+          (m) => m.credentialId === ai.credentialId && m.modelId === ai.model
+        ) ?? unionModels.find((m) => m.modelId === ai.model))
+      : undefined;
+  const selectedModelValue =
+    unionModels.length > 0
+      ? compositeValue
+        ? `${compositeValue.credentialId}:${compositeValue.modelId}`
+        : undefined
+      : ai.model;
+
   return (
     <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
       <h3 className="mb-3 text-sm font-semibold text-foreground">
@@ -255,17 +271,17 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
               : "(default list)"}
           </Label>
           <Select
-            value={ai.model}
+            value={selectedModelValue}
             onValueChange={(v) => {
               if (typeof v !== "string") return;
-              const hit = unionModels.find((m) => m.modelId === v);
-              patch({
-                ai: {
-                  ...ai,
-                  model: v,
-                  ...(hit ? { credentialId: hit.credentialId } : {}),
-                },
-              });
+              if (unionModels.length > 0) {
+                const sep = v.indexOf(":");
+                const credentialId = v.slice(0, sep);
+                const model = v.slice(sep + 1);
+                patch({ ai: { ...ai, model, credentialId } });
+              } else {
+                patch({ ai: { ...ai, model: v } });
+              }
             }}
           >
             <SelectTrigger
@@ -281,7 +297,7 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
               {unionModels.length > 0
                 ? activeCreds.map((c) =>
                     c.models.map((m) => (
-                      <SelectItem key={`${c.id}:${m}`} value={m}>
+                      <SelectItem key={`${c.id}:${m}`} value={`${c.id}:${m}`}>
                         {c.label} · {m}
                       </SelectItem>
                     ))
