@@ -8,8 +8,12 @@ gateway), engineered for minimal token consumption.
 
 ## Status
 
-🚧 **Pre-scaffold / design phase.** The codebase has not been scaffolded yet —
-see the roadmap in the detailed design plan.
+**Shipped scaffold + canvas authoring.** Monorepo with `apps/web` (Next.js creator UI)
+and `packages/fsm-engine` (signal parser / run loop — on Feature 001 branches/PRs).
+Feature **001 Workflow Canvas** is **Complete** (phases C1–C7) on branches/PRs — C1
+merged to `master`; C2–C7 in open PRs. Feature **002 Memory & Code Index** is
+**Detailed** (not shipped). See [FeatureShipping/](FeatureShipping/) for the
+detail → ship → test workflow.
 
 ## Documentation
 
@@ -17,7 +21,7 @@ see the roadmap in the detailed design plan.
 |-----|----------|
 | [InitialDraftPlan.md](InitialDraftPlan.md) | Original concept: FSM engine, signal transitions, token optimization, Magic UI canvas, roadmap |
 | [DETAILED_DESIGN_PLAN.md](DETAILED_DESIGN_PLAN.md) | Implementation-grade design: architecture decisions, monorepo layout, FSM DSL, signal grammar, gRPC/proto contracts, BYOK gateway, **testing strategy (Vitest + Playwright)**, **CI pipeline**, open questions, and de-risking next steps |
-| [FeatureShipping/](FeatureShipping/) | Per-feature design deltas (canvas, memory/code index, …). Workflow: **detail-feature** (high-end) → **ship-feature** (Composer/Grok) → **test-feature** (Composer/Grok) |
+| [FeatureShipping/](FeatureShipping/) | Per-feature design deltas (canvas, memory/code index, live executors, export, …). Workflow: **detail-feature** (high-end) → **ship-feature** (Composer/Grok) → **test-feature** (Composer/Grok) |
 
 ## Highlights
 
@@ -29,5 +33,6 @@ see the roadmap in the detailed design plan.
 
 ## Next up
 
-Phase 0 (scaffold + de-risking spikes) as defined in
-[DETAILED_DESIGN_PLAN.md §16–17](DETAILED_DESIGN_PLAN.md).
+- Land open canvas PRs, then ship Feature 002 (M1+)
+- Detail next FeatureShipping stubs (live executors, credential security, harness export)
+- Remaining design-plan packages (`byok-gateway`, `export-engine`, gRPC shims) still future work — see [DETAILED_DESIGN_PLAN.md §16](DETAILED_DESIGN_PLAN.md)

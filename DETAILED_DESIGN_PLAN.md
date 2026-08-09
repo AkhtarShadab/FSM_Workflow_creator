@@ -855,14 +855,16 @@ jobs:
 
 ## 16. Refined Implementation Roadmap
 
-| Phase | Scope (draft §6 refined) | Exit criteria (testable) |
-|-------|--------------------------|--------------------------|
-| **0. Scaffold & de-risk** | Monorepo + CI + Vitest/Playwright harness + spikes (§17) | CI green on empty scaffold; spike reports closed |
-| **1. Canvas foundation** | Next.js, React Flow, custom nodes/edges, Zustand, Magic UI bg | Component tests green; E2E: add node → connect → reload persists (localStorage stub) |
-| **2. Inspector + persistence** | Bento inspector, Turso/libSQL via Drizzle ORM, tRPC CRUD, `canvasToDsl` | DSL round-trip unit tests; E2E: edit prompt → save → reload shows value |
-| **3. Engine + gRPC + BYOK** | Signal parser, run loop, gRPC bridge + Python shim, model discovery | Golden trace suite green; contract suite vs shim green; mock-LLM discovery E2E |
-| **4. Token optimization + subagents** | State 0, System Functions, SPAWN/AGGREGATE, memory-graph hydration | Token-budget invariant test green; subagent aggregation integration test green; memory nodes appear in State-0 phase map |
-| **5. Copilot + export** | Copilot tool-calling loop, export pipeline (ZIP/git) | Deterministic copilot E2E green; exported harness `docker compose up` smoke test in CI |
+| Phase | Scope (draft §6 refined) | Exit criteria (testable) | Status |
+|-------|--------------------------|--------------------------|--------|
+| **0. Scaffold & de-risk** | Monorepo + Vitest/Playwright harness; CI landing separately | Scaffold green; spikes deferred | **Done** (monorepo `apps/web` + `packages/fsm-engine`; CI in hygiene PR) |
+| **1. Canvas foundation** | Next.js, React Flow, custom nodes/edges, Zustand, Magic UI bg | Component tests green; E2E: add node → connect → reload persists | **Done** (Feature 001 C1–C7) |
+| **2. Inspector + persistence** | Bento inspector, Turso/libSQL via Drizzle ORM, canvas↔DSL | DSL round-trip unit tests; E2E save/reload | **Done** (canvas + inspector + Drizzle/Turso on `apps/web`) |
+| **3. Engine + gRPC + BYOK** | Signal parser, run loop, gRPC bridge + Python shim, model discovery | Golden traces; contract suite; discovery E2E | **Partial** — `packages/fsm-engine` + in-app run loop + BYOK discovery UI; **live LLM/HTTP executors, gRPC shims, `byok-gateway` package still future** (see FeatureShipping 003/005) |
+| **4. Token optimization + subagents** | State 0, System Functions, SPAWN/AGGREGATE, memory-graph hydration | Token-budget + subagent tests; memory in State-0 map | **Partial** — SPAWN/AGGREGATE + SYS_FUNC on canvas (001); memory code-index (002) not shipped |
+| **5. Copilot + export** | Copilot tool-calling loop, export pipeline (ZIP/git) | Copilot E2E; exported harness smoke | **Not started** — `packages/export-engine` / harness export still future (FeatureShipping 004) |
+
+**Missing packages (future, not scaffolded yet):** `packages/byok-gateway`, `packages/export-engine`, `packages/fsm-schema` (if split from web), proto/gRPC tool shims (`tools-python` / `tools-cpp`). Tracked via FeatureShipping 003–006.
 
 ---
 
