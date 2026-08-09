@@ -14,7 +14,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import {
   ArrowLeft,
   Brain,
