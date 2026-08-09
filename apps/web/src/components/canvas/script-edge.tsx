@@ -3,10 +3,11 @@
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
   type EdgeProps,
 } from "@xyflow/react";
 import { BeamDot, PencilEdgeLabel } from "./pencil-defs";
+import { getTransitionPath, strokeDashForKind } from "./edge-path";
+import type { TransitionEdgeKind } from "@/lib/fsm-types";
 
 /** ScriptEdge — bold pencil stroke (deterministic transitions) */
 export function ScriptEdge({
@@ -21,13 +22,15 @@ export function ScriptEdge({
   selected,
   markerEnd,
 }: EdgeProps) {
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const kind = data?.kind as TransitionEdgeKind | undefined;
+  const [edgePath, labelX, labelY] = getTransitionPath({
     sourceX,
     sourceY,
-    sourcePosition,
     targetX,
     targetY,
+    sourcePosition,
     targetPosition,
+    kind,
   });
 
   return (
@@ -40,6 +43,7 @@ export function ScriptEdge({
           stroke: "var(--ink)",
           strokeWidth: selected ? 5 : 4,
           strokeLinecap: "round",
+          strokeDasharray: strokeDashForKind(kind),
           filter: "url(#pencil-rough)",
         }}
       />

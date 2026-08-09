@@ -3,12 +3,13 @@
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
   type EdgeProps,
 } from "@xyflow/react";
 import { BeamDot, PencilEdgeLabel } from "./pencil-defs";
+import { getTransitionPath } from "./edge-path";
+import type { TransitionEdgeKind } from "@/lib/fsm-types";
 
-/** SystemEdge — dotted pencil stroke (SYSTEM.* checkpoint signals) */
+/** SystemEdge — dotted pencil stroke (SYSTEM.* / HUMAN.* signals) */
 export function SystemEdge({
   id,
   sourceX,
@@ -21,13 +22,15 @@ export function SystemEdge({
   selected,
   markerEnd,
 }: EdgeProps) {
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const kind = data?.kind as TransitionEdgeKind | undefined;
+  const [edgePath, labelX, labelY] = getTransitionPath({
     sourceX,
     sourceY,
-    sourcePosition,
     targetX,
     targetY,
+    sourcePosition,
     targetPosition,
+    kind,
   });
 
   return (
@@ -39,7 +42,7 @@ export function SystemEdge({
         style={{
           stroke: "var(--ink)",
           strokeWidth: selected ? 4 : 3,
-          strokeDasharray: "2 8",
+          strokeDasharray: kind === "router" ? "4 6" : "2 8",
           strokeLinecap: "round",
           filter: "url(#pencil-rough)",
         }}

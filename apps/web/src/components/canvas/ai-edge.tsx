@@ -3,10 +3,11 @@
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
   type EdgeProps,
 } from "@xyflow/react";
 import { BeamDot, PencilEdgeLabel } from "./pencil-defs";
+import { getTransitionPath } from "./edge-path";
+import type { TransitionEdgeKind } from "@/lib/fsm-types";
 
 /** AIEdge — dashed pencil stroke (generative transitions) */
 export function AIEdge({
@@ -21,13 +22,15 @@ export function AIEdge({
   selected,
   markerEnd,
 }: EdgeProps) {
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const kind = data?.kind as TransitionEdgeKind | undefined;
+  const [edgePath, labelX, labelY] = getTransitionPath({
     sourceX,
     sourceY,
-    sourcePosition,
     targetX,
     targetY,
+    sourcePosition,
     targetPosition,
+    kind,
   });
 
   return (
@@ -39,7 +42,7 @@ export function AIEdge({
         style={{
           stroke: "var(--ink)",
           strokeWidth: selected ? 4 : 3,
-          strokeDasharray: "9 7",
+          strokeDasharray: kind === "router" ? "4 6" : "9 7",
           strokeLinecap: "round",
           filter: "url(#pencil-rough)",
         }}
