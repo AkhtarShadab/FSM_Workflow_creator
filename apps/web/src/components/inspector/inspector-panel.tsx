@@ -11,11 +11,17 @@ import { cn } from "@/lib/utils";
 import { STATE_COLORS, type StateNodeData } from "@/lib/fsm-types";
 import { useCanvasStore } from "@/stores/canvas-store";
 import {
+  AggregateCard,
+  ConditionsCard,
   GenerativeConfigCard,
   GuardrailsCard,
+  HttpCard,
+  HumanCard,
   ScriptEditorCard,
   SpawnCard,
   SystemFunctionCard,
+  ValidateCard,
+  ExternalAICard,
   VerifiabilityCard,
 } from "./inspector-cards";
 
@@ -37,8 +43,6 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
   const patch = (partial: Partial<StateNodeData>) => {
     if (node) updateNodeData(projectId, node.id, partial);
   };
-
-  const outgoing = node ? edges.filter((e) => e.source === node.id) : [];
 
   return (
     <aside
@@ -107,41 +111,55 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
                 {node.data.stateType === "SPAWN" && (
                   <SpawnCard node={node} patch={patch} />
                 )}
-                {node.data.stateType === "SYSTEM_FUNCTION" && (
-                  <SystemFunctionCard node={node} patch={patch} />
+                {node.data.stateType === "AGGREGATE" && (
+                  <AggregateCard
+                    node={node}
+                    patch={patch}
+                    allNodes={nodes}
+                    projectId={projectId}
+                  />
                 )}
-                {["SCRIPT", "AI", "SPAWN"].includes(node.data.stateType) && (
+                {node.data.stateType === "HTTP" && (
+                  <HttpCard node={node} patch={patch} />
+                )}
+                {node.data.stateType === "VALIDATE" && (
+                  <ValidateCard node={node} patch={patch} />
+                )}
+                {node.data.stateType === "HUMAN" && (
+                  <HumanCard node={node} patch={patch} />
+                )}
+                {node.data.stateType === "EXTERNAL_AI" && (
+                  <ExternalAICard node={node} patch={patch} />
+                )}
+                {node.data.stateType === "SYSTEM_FUNCTION" && (
+                  <SystemFunctionCard
+                    node={node}
+                    patch={patch}
+                    allNodes={nodes}
+                    allEdges={edges}
+                  />
+                )}
+                {[
+                  "SCRIPT",
+                  "AI",
+                  "SPAWN",
+                  "HTTP",
+                  "VALIDATE",
+                  "EXTERNAL_AI",
+                  "HUMAN",
+                ].includes(node.data.stateType) && (
                   <>
                     <VerifiabilityCard node={node} patch={patch} />
                     <GuardrailsCard node={node} patch={patch} />
                   </>
                 )}
 
-                {outgoing.length > 0 && (
-                  <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
-                    <h3 className="mb-2 text-sm font-semibold text-foreground">
-                      Transitions
-                    </h3>
-                    <ul className="space-y-1.5">
-                      {outgoing.map((e) => {
-                        const target = nodes.find((n) => n.id === e.target);
-                        return (
-                          <li
-                            key={e.id}
-                            className="flex items-center justify-between rounded-md border border-foreground/5 bg-foreground/5 px-2 py-1 font-mono text-[10px]"
-                          >
-                            <span className="text-sky-300">
-                              {String(e.data?.signal ?? "")}
-                            </span>
-                            <span className="text-muted-foreground">
-                              → {target?.data.label ?? e.target}
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
+                <ConditionsCard
+                  node={node}
+                  allNodes={nodes}
+                  allEdges={edges}
+                  projectId={projectId}
+                />
               </div>
             </ScrollArea>
           </>

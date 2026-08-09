@@ -1,16 +1,22 @@
 import type { Edge, Node } from "@xyflow/react";
 
-/** FSM state types per DETAILED_DESIGN_PLAN §2 */
+/** FSM state types per DETAILED_DESIGN_PLAN §2 + FeatureShipping 001 C4/C7 */
 export type FSMStateType =
   | "START"
   | "SCRIPT"
+  | "HTTP"
   | "AI"
+  | "EXTERNAL_AI"
+  | "VALIDATE"
+  | "HUMAN"
   | "SPAWN"
   | "AGGREGATE"
   | "SYSTEM_FUNCTION"
   | "END";
 
 export type ToolLanguage = "python" | "cpp" | "bash";
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /** Card 1 — deterministic execution config (§10.3) */
 export interface ScriptConfig {
@@ -27,6 +33,50 @@ export interface AIConfig {
   maxTokens: number;
   systemPrompt: string;
   outputSchema: string;
+}
+
+/** HTTP / FETCH state (FeatureShipping 001 §3.7) */
+export interface HttpConfig {
+  method: HttpMethod;
+  urlTemplate: string;
+  authCredentialId?: string;
+  headers: Record<string, string>;
+  bodyTemplate?: string;
+  /** Signals emitted on success; map status/body → signal at runtime */
+  successSignals: string[];
+}
+
+/** VALIDATE state — schema or predicate gate */
+export interface ValidateStateConfig {
+  kind: "schema" | "predicate";
+  schema?: string;
+  predicateRef?: string;
+}
+
+export type ExternalCredentialKind =
+  | "openai_compatible"
+  | "anthropic"
+  | "custom";
+
+/** EXTERNAL_AI — one-off endpoint outside the primary BYOK pool UX */
+export interface ExternalAIConfig {
+  credentialId: string;
+  credentialKind: ExternalCredentialKind;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  systemPrompt: string;
+  outputSchema: string;
+}
+
+/** HUMAN — pause for external approval (FeatureShipping 001 §10.4) */
+export interface HumanConfig {
+  prompt: string;
+  approvalSignals: string[];
+  assignTo?: string;
+  timeoutMs?: number;
+  onTimeout?: { signal: string; to?: string };
 }
 
 /** Card 3 — guardrails & fallback logic (§10.3) */
@@ -62,6 +112,12 @@ export interface SpawnConfig {
   aggregateTo: string;
 }
 
+/** AGGREGATE pairing back-ref (FeatureShipping 001 §10.3) */
+export interface AggregateConfig {
+  fromSpawnId: string;
+  strategy: AggregationStrategy;
+}
+
 export interface VerifyConfig {
   kind: "schema" | "script";
   scriptRef?: string;
@@ -72,12 +128,53 @@ export interface OnErrorConfig {
   to?: string;
 }
 
+/** Named attachment point on a SYSTEM_FUNCTION router (§10.2) */
+export interface RouterHead {
+  id: string;
+  label: string;
+  direction: "in" | "out" | "bidirectional";
+  /** stateId, another SYSTEM_FUNCTION id, HUMAN, or external component ref */
+  componentRef: string;
+  /** optional signal/predicate that must hold for this head to activate */
+  condition?: string;
+}
+
 export interface SystemFunctionConfig {
   summaryStrategy: "template" | "llm";
-  /** Types for C1; enable-map UI lands in C2 */
+  /** States considered "on" after this boundary; empty = no enable filter */
   enabledStateIds: string[];
+  /** Explicit offs — wins over enabledStateIds when both list a state */
   disabledStateIds: string[];
   rewire: Array<{ from: string; on: string; to: string }>;
+  /** Topology heads — one handle per attached component (§10.2) */
+  heads: RouterHead[];
+}
+
+/** Canvas linter issue (FeatureShipping 001 C2) */
+export interface LintIssue {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  nodeId?: string;
+}
+
+/**
+ * Disabled wins: listed in disabledStateIds → off.
+ * If enabledStateIds is non-empty and id is absent → off.
+ * Otherwise on.
+ */
+export function isStateDisabledByMask(
+  stateId: string,
+  mask: Pick<SystemFunctionConfig, "enabledStateIds" | "disabledStateIds">
+): boolean {
+  if (mask.disabledStateIds.includes(stateId)) return true;
+  if (
+    mask.enabledStateIds.length > 0 &&
+    !mask.enabledStateIds.includes(stateId)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Data carried by every canvas node */
@@ -91,14 +188,32 @@ export interface StateNodeData extends Record<string, unknown> {
   onError: OnErrorConfig;
   script: ScriptConfig;
   ai: AIConfig;
+  http: HttpConfig;
+  validate: ValidateStateConfig;
+  externalAi: ExternalAIConfig;
+  human: HumanConfig;
   guardrails: GuardrailConfig;
   spawn: SpawnConfig;
+  aggregate: AggregateConfig;
   systemFunction: SystemFunctionConfig;
 }
+
+/** Topology kind for edges (FeatureShipping 001 §10.4–10.5) */
+export type TransitionEdgeKind = "transition" | "self-loop" | "router";
+
+/** Default self-loop iteration cap (§10.6 decision #5) */
+export const DEFAULT_SELF_LOOP_MAX_ITERATIONS = 3;
+
+/** Soft warn threshold for SYS_FUNC head count (§10.6 decision #2) */
+export const SYSFUNC_HEADS_WARN_THRESHOLD = 8;
 
 /** Data carried by every transition edge */
 export interface TransitionEdgeData extends Record<string, unknown> {
   signal: string;
+  /** default "transition" for back-compat */
+  kind?: TransitionEdgeKind;
+  /** required when kind === "self-loop"; distinct from guardrails.retryMax */
+  maxIterations?: number;
 }
 
 export type StateNode = Node<StateNodeData, "stateCircle">;
@@ -113,19 +228,61 @@ export type EdgeKind = "script" | "ai" | "system" | "spawn";
 
 /** Map a signal to its visual edge family (§10.2 edge styles) */
 export function edgeTypeForSignal(signal: string): EdgeKind {
-  if (signal.startsWith("::AI.")) return "ai";
-  if (signal.startsWith("::SYSTEM.")) return "system";
+  if (signal.startsWith("::AI.") || signal.startsWith("::EXTERNAL_AI.")) return "ai";
+  if (signal.startsWith("::SYSTEM.") || signal.startsWith("::HUMAN.")) return "system";
   if (signal.startsWith("::SPAWN.")) return "spawn";
   return "script";
+}
+
+export function normalizeEdgeKind(
+  raw: unknown,
+  source?: string,
+  target?: string
+): TransitionEdgeKind {
+  if (raw === "self-loop" || raw === "router" || raw === "transition") return raw;
+  if (source && target && source === target) return "self-loop";
+  return "transition";
+}
+
+export function normalizeEdgeData(
+  raw: unknown,
+  source?: string,
+  target?: string
+): TransitionEdgeData {
+  const d = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const kind = normalizeEdgeKind(d.kind, source, target);
+  const signal =
+    typeof d.signal === "string" && d.signal ? d.signal : "::SCRIPT.NEXT";
+  const maxIterations =
+    typeof d.maxIterations === "number"
+      ? d.maxIterations
+      : kind === "self-loop"
+        ? DEFAULT_SELF_LOOP_MAX_ITERATIONS
+        : undefined;
+  return {
+    signal,
+    kind,
+    ...(maxIterations != null ? { maxIterations } : {}),
+  };
 }
 
 /** Canonical signal presets grouped by namespace (§6.1) */
 export const SIGNAL_PRESETS: { signal: string; kind: EdgeKind; hint: string }[] = [
   { signal: "::SCRIPT.NEXT", kind: "script", hint: "tool exit 0" },
   { signal: "::SCRIPT.ERROR", kind: "script", hint: "tool non-zero / timeout" },
+  { signal: "::HTTP.NEXT", kind: "script", hint: "HTTP success" },
+  { signal: "::HTTP.ERROR", kind: "script", hint: "HTTP failure / timeout" },
+  { signal: "::VALIDATE.NEXT", kind: "script", hint: "validation passed" },
+  { signal: "::VALIDATE.ERROR", kind: "script", hint: "validation failed" },
   { signal: "::AI.NEXT", kind: "ai", hint: "transition after generation" },
   { signal: "::AI.GENERATE", kind: "ai", hint: "chained generation" },
   { signal: "::AI.VALIDATION_ERROR", kind: "ai", hint: "schema failure route" },
+  { signal: "::EXTERNAL_AI.NEXT", kind: "ai", hint: "external AI success" },
+  { signal: "::EXTERNAL_AI.ERROR", kind: "ai", hint: "external AI failure" },
+  { signal: "::HUMAN.APPROVE", kind: "system", hint: "human approved" },
+  { signal: "::HUMAN.REJECT", kind: "system", hint: "human rejected" },
+  { signal: "::HUMAN.EDIT", kind: "system", hint: "human requested edits" },
+  { signal: "::HUMAN.TIMEOUT", kind: "system", hint: "approval timed out" },
   { signal: "::SPAWN.SUBAGENTS", kind: "spawn", hint: "fan out child runs" },
   { signal: "::SYSTEM.DEHYDRATE", kind: "system", hint: "persist context slice" },
   { signal: "::SYSTEM.HYDRATE", kind: "system", hint: "load summary + schemas" },
@@ -149,11 +306,35 @@ export const STATE_COLORS: Record<
     text: "text-[#1e4a8a]",
     tape: "bg-[#8fb4ec]/50",
   },
+  HTTP: {
+    note: "bg-[#e0f2fe]",
+    border: "border-[#7dd3fc]",
+    text: "text-[#075985]",
+    tape: "bg-[#38bdf8]/40",
+  },
   AI: {
     note: "bg-[#fce7f3]",
     border: "border-[#f0b8d9]",
     text: "text-[#8a2a63]",
     tape: "bg-[#ec9fca]/50",
+  },
+  EXTERNAL_AI: {
+    note: "bg-[#ffedd5]",
+    border: "border-[#fdba74]",
+    text: "text-[#9a3412]",
+    tape: "bg-[#fb923c]/40",
+  },
+  VALIDATE: {
+    note: "bg-[#ecfccb]",
+    border: "border-[#bef264]",
+    text: "text-[#3f6212]",
+    tape: "bg-[#a3e635]/40",
+  },
+  HUMAN: {
+    note: "bg-[#f5f5f4]",
+    border: "border-[#d6d3d1]",
+    text: "text-[#44403c]",
+    tape: "bg-[#a8a29e]/40",
   },
   SPAWN: {
     note: "bg-[#fef3c7]",
@@ -185,12 +366,119 @@ export const STATE_COLORS: Record<
 export const DEFAULT_SIGNALS: Record<FSMStateType, string> = {
   START: "::SCRIPT.NEXT",
   SCRIPT: "::SCRIPT.NEXT",
+  HTTP: "::HTTP.NEXT",
   AI: "::AI.NEXT",
+  EXTERNAL_AI: "::EXTERNAL_AI.NEXT",
+  VALIDATE: "::VALIDATE.NEXT",
+  HUMAN: "::HUMAN.APPROVE",
   SPAWN: "::SPAWN.SUBAGENTS",
   AGGREGATE: "::SCRIPT.NEXT",
   SYSTEM_FUNCTION: "::SYSTEM.HYDRATE",
   END: "::SYSTEM.HALT",
 };
+
+/** Palette groups for the canvas toolbar (FeatureShipping 001 §3.1) */
+export const PALETTE_GROUPS: {
+  id: "flow" | "work" | "control";
+  label: string;
+  types: FSMStateType[];
+}[] = [
+  { id: "flow", label: "Flow", types: ["START", "END"] },
+  {
+    id: "work",
+    label: "Work",
+    types: ["SCRIPT", "HTTP", "AI", "EXTERNAL_AI", "VALIDATE", "HUMAN"],
+  },
+  {
+    id: "control",
+    label: "Control",
+    types: ["SYSTEM_FUNCTION", "SPAWN", "AGGREGATE"],
+  },
+];
+
+export const STATE_CATALOG: Record<
+  FSMStateType,
+  { label: string; tooltip: string }
+> = {
+  START: { label: "Start", tooltip: "Hydration / phase map (State 0)" },
+  END: { label: "End", tooltip: "Terminal success" },
+  SCRIPT: { label: "Script", tooltip: "Deterministic native tool (gRPC)" },
+  HTTP: { label: "HTTP", tooltip: "Call an external URL with auth + signal map" },
+  AI: { label: "AI", tooltip: "Generative reasoning via BYOK model select" },
+  EXTERNAL_AI: {
+    label: "Ext AI",
+    tooltip: "Hit a non-platform OpenAI-compatible / Anthropic / custom endpoint",
+  },
+  VALIDATE: {
+    label: "Validate",
+    tooltip:
+      "Executor-less gate — assert schema/predicate (verify required; no tool body)",
+  },
+  HUMAN: {
+    label: "Human",
+    tooltip: "Pause for human approval / edit / reject",
+  },
+  SYSTEM_FUNCTION: {
+    label: "Sys Func",
+    tooltip: "Checkpoint router with named heads + enablement mask",
+  },
+  SPAWN: { label: "Spawn", tooltip: "Fan-out 1→X child FSMs with concurrency cap" },
+  AGGREGATE: { label: "Aggregate", tooltip: "Merge X→1 child result envelopes" },
+};
+
+export function defaultHttpConfig(): HttpConfig {
+  return {
+    method: "GET",
+    urlTemplate: "https://example.com/api",
+    headers: {},
+    successSignals: ["::HTTP.NEXT"],
+  };
+}
+
+export function defaultValidateConfig(): ValidateStateConfig {
+  return { kind: "schema", schema: '{"type":"object"}' };
+}
+
+export function defaultExternalAiConfig(): ExternalAIConfig {
+  return {
+    credentialId: "",
+    credentialKind: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    temperature: 0.2,
+    maxTokens: 4000,
+    systemPrompt: "",
+    outputSchema: "",
+  };
+}
+
+export function defaultHumanConfig(): HumanConfig {
+  return {
+    prompt: "Please review and approve to continue.",
+    approvalSignals: ["::HUMAN.APPROVE", "::HUMAN.REJECT", "::HUMAN.EDIT"],
+    timeoutMs: 3600000,
+    onTimeout: { signal: "::HUMAN.TIMEOUT" },
+  };
+}
+
+export function defaultAggregateConfig(): AggregateConfig {
+  return {
+    fromSpawnId: "",
+    strategy: "waitAll",
+  };
+}
+
+export function defaultRouterHead(
+  partial: Partial<RouterHead> & Pick<RouterHead, "id" | "label">
+): RouterHead {
+  return {
+    id: partial.id,
+    label: partial.label,
+    direction: partial.direction ?? "out",
+    componentRef: partial.componentRef ?? "",
+    ...(partial.condition ? { condition: partial.condition } : {}),
+  };
+}
 
 export function defaultChildProfile(childFsm = "child-worker"): ChildProfile {
   return {
@@ -211,6 +499,11 @@ export function defaultSpawnConfig(): SpawnConfig {
     profiles: [defaultChildProfile()],
     aggregateTo: "",
   };
+}
+
+/** X = homogeneous count or heterogeneous profiles.length (§10.3) */
+export function spawnWorkerCount(spawn: SpawnConfig): number {
+  return spawn.mode === "heterogeneous" ? spawn.profiles.length : spawn.count;
 }
 
 /** Normalize persisted / legacy spawn shapes to SpawnConfig v2 */
@@ -264,6 +557,60 @@ export function normalizeSpawn(raw: unknown): SpawnConfig {
   };
 }
 
+export function normalizeAggregate(raw: unknown): AggregateConfig {
+  const base = defaultAggregateConfig();
+  if (!raw || typeof raw !== "object") return base;
+  const a = raw as Record<string, unknown>;
+  return {
+    fromSpawnId: typeof a.fromSpawnId === "string" ? a.fromSpawnId : "",
+    strategy:
+      a.strategy === "quorum" || a.strategy === "firstSuccess" || a.strategy === "waitAll"
+        ? a.strategy
+        : base.strategy,
+  };
+}
+
+export function normalizeSystemFunction(raw: unknown): SystemFunctionConfig {
+  const base: SystemFunctionConfig = {
+    summaryStrategy: "template",
+    enabledStateIds: [],
+    disabledStateIds: [],
+    rewire: [],
+    heads: [],
+  };
+  if (!raw || typeof raw !== "object") return base;
+  const s = raw as Record<string, unknown>;
+  const heads = Array.isArray(s.heads)
+    ? (s.heads as RouterHead[]).map((h, i) =>
+        defaultRouterHead({
+          id: h.id || `head-${i}`,
+          label: h.label || `Head ${i + 1}`,
+          direction:
+            h.direction === "in" ||
+            h.direction === "out" ||
+            h.direction === "bidirectional"
+              ? h.direction
+              : "out",
+          componentRef: h.componentRef ?? "",
+          condition: h.condition,
+        })
+      )
+    : [];
+  return {
+    summaryStrategy: s.summaryStrategy === "llm" ? "llm" : "template",
+    enabledStateIds: Array.isArray(s.enabledStateIds)
+      ? (s.enabledStateIds as string[])
+      : [],
+    disabledStateIds: Array.isArray(s.disabledStateIds)
+      ? (s.disabledStateIds as string[])
+      : [],
+    rewire: Array.isArray(s.rewire)
+      ? (s.rewire as SystemFunctionConfig["rewire"])
+      : [],
+    heads,
+  };
+}
+
 export function primaryProfile(spawn: SpawnConfig): ChildProfile {
   return spawn.profiles[0] ?? defaultChildProfile();
 }
@@ -275,9 +622,15 @@ export function defaultNodeData(
   const errorSignal =
     stateType === "AI"
       ? "::AI.VALIDATION_ERROR"
-      : stateType === "SPAWN"
-        ? "::SCRIPT.ERROR"
-        : "::SCRIPT.ERROR";
+      : stateType === "EXTERNAL_AI"
+        ? "::EXTERNAL_AI.ERROR"
+        : stateType === "HTTP"
+          ? "::HTTP.ERROR"
+          : stateType === "VALIDATE"
+            ? "::VALIDATE.ERROR"
+            : stateType === "HUMAN"
+              ? "::HUMAN.REJECT"
+              : "::SCRIPT.ERROR";
 
   return {
     stateType,
@@ -303,13 +656,19 @@ export function defaultNodeData(
       systemPrompt: "",
       outputSchema: "",
     },
+    http: defaultHttpConfig(),
+    validate: defaultValidateConfig(),
+    externalAi: defaultExternalAiConfig(),
+    human: defaultHumanConfig(),
     guardrails: { timeoutMs: 30000, retryMax: 2, retryBackoffMs: 1000 },
     spawn: defaultSpawnConfig(),
+    aggregate: defaultAggregateConfig(),
     systemFunction: {
       summaryStrategy: "template",
       enabledStateIds: [],
       disabledStateIds: [],
       rewire: [],
+      heads: [],
     },
   };
 }

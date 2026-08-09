@@ -40,7 +40,7 @@ Every feature doc should include:
 
 | Doc | Feature | Status |
 |-----|---------|--------|
-| [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents | In progress (C1) |
+| [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents, engine, registry | **Complete** (C1–C7) — Round 2: SYS_FUNC router heads, SPAWN/AGGREGATE cardinality, HUMAN + self-loops, richer connection kinds |
 | [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | Detailed |
 
 Calendar and Notifications are deferred to later FeatureShipping docs.
