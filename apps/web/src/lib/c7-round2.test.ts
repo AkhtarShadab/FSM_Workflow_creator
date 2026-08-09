@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canvasToDsl, lintCanvas } from "./canvas-to-dsl";
+import { canvasToDsl, hasPathToEndUnderMask, lintCanvas } from "./canvas-to-dsl";
 import {
   defaultNodeData,
   type CanvasData,
@@ -207,5 +207,30 @@ describe("FeatureShipping 001 C7 Round 2", () => {
     expect(issues.some((i) => i.code === "AGGREGATE_MULTIPLE_SPAWN")).toBe(
       true
     );
+  });
+
+  it("mask reachability ignores router edges like other flow lints", () => {
+    const emptyMask = {
+      summaryStrategy: "template" as const,
+      enabledStateIds: [],
+      disabledStateIds: [],
+      rewire: [],
+      heads: [],
+    };
+    const nodes = [node("S0", "START"), node("SF1", "SYSTEM_FUNCTION"), node("END", "END")];
+
+    // START → END only via a router edge: no real flow path exists.
+    const routerOnly = [
+      edge("e1", "S0", "SF1", "::SCRIPT.NEXT"),
+      edge("e2", "SF1", "END", "::SYSTEM.HYDRATE", { kind: "router" }),
+    ];
+    expect(hasPathToEndUnderMask(nodes, routerOnly, emptyMask)).toBe(false);
+
+    // Same wiring with a flow edge reaches END.
+    const flow = [
+      edge("e1", "S0", "SF1", "::SCRIPT.NEXT"),
+      edge("e2", "SF1", "END", "::SYSTEM.HYDRATE"),
+    ];
+    expect(hasPathToEndUnderMask(nodes, flow, emptyMask)).toBe(true);
   });
 });

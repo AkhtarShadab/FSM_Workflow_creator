@@ -319,7 +319,11 @@ export function hasPathToEndUnderMask(
   };
 
   for (const e of edges) {
-    setEdge(e.source, e.data?.signal ?? "::SCRIPT.NEXT", e.target);
+    // Router edges are SYS_FUNC wiring, not flow — mirror the C7
+    // UNREACHABLE / DEAD_END reachability checks and skip them.
+    const data = normalizeEdgeData(e.data, e.source, e.target);
+    if (data.kind === "router") continue;
+    setEdge(e.source, data.signal, e.target);
   }
   for (const r of mask.rewire) {
     if (r.from && r.on && r.to) setEdge(r.from, r.on, r.to);

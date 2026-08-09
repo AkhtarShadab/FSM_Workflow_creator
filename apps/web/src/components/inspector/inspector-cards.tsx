@@ -1142,6 +1142,17 @@ export function AggregateCard({
                 ? normalizeSpawn(spawn.data.spawn).strategy
                 : aggregate.strategy;
               patchAgg({ fromSpawnId: v, strategy });
+              // Clear the back-ref on any previously paired SPAWN so only
+              // one SPAWN ever points at this AGGREGATE.
+              for (const s of spawns) {
+                if (s.id === v) continue;
+                const cfg = normalizeSpawn(s.data.spawn);
+                if (cfg.aggregateTo === node.id) {
+                  updateNodeData(projectId, s.id, {
+                    spawn: { ...cfg, aggregateTo: "" },
+                  });
+                }
+              }
               if (spawn) {
                 updateNodeData(projectId, spawn.id, {
                   spawn: {

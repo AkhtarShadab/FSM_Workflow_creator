@@ -8,6 +8,7 @@ import {
 } from "@fsm/engine";
 import type { CanvasData } from "@/lib/fsm-types";
 import { normalizeSpawn } from "@/lib/fsm-types";
+import { canvasToDsl } from "@/lib/canvas-to-dsl";
 
 function canvasToEngine(canvas: CanvasData): {
   states: EngineState[];
@@ -110,7 +111,9 @@ async function stubExecute(args: {
  * Persist FSM snapshot, execute with @fsm/engine, write run_events.
  */
 export async function startProjectRun(projectId: number, canvas: CanvasData) {
-  const dsl = JSON.stringify(canvas);
+  // Persist the versioned FSM DSL (§10.2), not the raw React Flow canvas —
+  // consumers of fsm_definitions.json expect the exported schema.
+  const dsl = JSON.stringify(canvasToDsl(canvas));
   const [fsm] = await db
     .insert(fsmDefinitions)
     .values({ projectId, version: 1, json: dsl })
