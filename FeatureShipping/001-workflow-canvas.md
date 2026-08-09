@@ -1,8 +1,8 @@
 # 001 — Workflow Canvas
 
-> Status: **In progress** (C1 shipping on `cursor/canvas-c1-spawn-v2`)  
+> Status: **Complete (authoring + engine)** — C1–C6 on `cursor/canvas-c2-sysfunc-map` (AI/HTTP executors still stubbed; gRPC bridge deferred)  
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §§2, 5–7, 9–10  
-> Code today: [`apps/web/src/lib/fsm-types.ts`](../apps/web/src/lib/fsm-types.ts), canvas + inspector under `apps/web/src/components/`  
+> Code today: [`apps/web/src/lib/fsm-types.ts`](../apps/web/src/lib/fsm-types.ts), canvas + inspector under `apps/web/src/components/`, engine [`packages/fsm-engine/`](../packages/fsm-engine/)  
 > Implement with: **ship-feature** on Composer/Grok · Detail updates: **detail-feature** on high-end models
 
 ---
@@ -37,7 +37,7 @@ The FSM authoring concept is strong, but the canvas still feels vague for develo
 
 ### Non-goals (this feature)
 
-- Implementing the FSM engine or gRPC bridge (separate phases).
+- Full gRPC native-tool bridge (engine stubs SCRIPT/AI until that lands).
 - Calendar / Notifications.
 - Multiplayer canvas editing.
 
@@ -278,8 +278,9 @@ Reference UI today: [`fsm-canvas.tsx`](../apps/web/src/components/canvas/fsm-can
 | C2 | Same inspector + `canvas-to-dsl` | SYS_FUNC enable/disable multi-select + rewire table; lint rewire |
 | C3 | `apps/web/src/stores/credential-store.ts`, `credentials-view.tsx`, `app/settings/credentials/*` | Multi-active pool; real discovery replacing `MOCK_DISCOVERY` |
 | C3 | AI inspector card | Model select from union of discovered models |
-| C4 | `fsm-types.ts`, toolbar, inspector | New types `HTTP` / `VALIDATE` / `EXTERNAL_AI` (+ palette) |
-| C5 | `packages/fsm-engine/` (new) | Transition resolver, worker-pool SPAWN, aggregate envelopes |
+| C4 | `fsm-types.ts`, toolbar, inspector | New types `HTTP` / `VALIDATE` / `EXTERNAL_AI` (+ grouped palette) |
+| C5 | `packages/fsm-engine/` | Transition resolver, async SPAWN pool, aggregate envelopes, `runFsm` |
+| C5 | `apps/web/src/app/api/projects/[id]/runs` | Persist run + events; stub executors for SCRIPT/HTTP/AI |
 | C6 | `packages/fsm-schema/` or `apps/web/src/lib/registry.ts` | Custom signal/state/SYS_FUNC registry + lint |
 
 **Locked defaults for implementers (until open questions close):**
@@ -319,16 +320,21 @@ Reference UI today: [`fsm-canvas.tsx`](../apps/web/src/components/canvas/fsm-can
 
 ---
 
-## 8. Suggested implementation phases
+## 8. Implementation phases & checklist
 
-| Phase | Scope | Model lane |
-|-------|--------|------------|
-| C1 | Types/DSL + SPAWN inspector + lint (no engine) | Composer/Grok via `ship-feature` |
-| C2 | SYS_FUNC enable map + rewire lint | Composer/Grok |
-| C3 | Multi-credential discovery + per-state model | Composer/Grok |
-| C4 | HTTP + VALIDATE (+ EXTERNAL_AI) palette/inspector | Composer/Grok |
-| C5 | Engine: tool-chained resolver + worker-pool SPAWN | Composer/Grok |
-| C6 | Custom registry | Composer/Grok |
+| Phase | Scope | Status |
+|-------|--------|--------|
+| C1 | Types/DSL + SPAWN inspector + lint (no engine) | **Done** (merged PR #2) |
+| C2 | SYS_FUNC enable map UI + lint severity (`LintIssue`) | **Done** |
+| C3 | Multi-credential discovery + per-state model union | **Done** |
+| C4 | HTTP + VALIDATE + EXTERNAL_AI + grouped Flow/Work/Control palette | **Done** |
+| C5 | `@fsm/engine`: tool-chained resolver + async spawn pool + `/api/projects/:id/runs` | **Done** (AI/HTTP executors stubbed) |
+| C6 | Custom state/signal/SYS_FUNC registry + hard unknown-signal lint | **Done** |
+
+### Remaining deferred (out of Feature 1 authoring scope)
+
+- Live provider gateway for AI/EXTERNAL_AI (keys still client-stub; AES server storage §14).
+- gRPC native SCRIPT bridge; `worker_threads` upgrade for SPAWN.
 
 Detail/revise this doc with **detail-feature** (high-end) only.
 
@@ -336,10 +342,13 @@ Detail/revise this doc with **detail-feature** (high-end) only.
 
 ## 9. Acceptance criteria
 
-- [ ] State catalog documented in UI help / palette tooltips matches this doc.
-- [ ] DSL round-trip includes `inputSchema` / `outputSchema` / `SpawnConfigV2` fields.
-- [ ] Lint fails on unknown signal and on SPAWN skill ref missing from registry.
-- [ ] Credentials UI can activate ≥2 keys; AI inspector lists union of discovered models.
-- [ ] SPAWN inspector exposes maxConcurrency, tool pack, skill pack.
-- [ ] Unit tests cover transition resolver allowlist + SYS_FUNC skip rewiring (once engine exists).
-- [ ] Playwright: add SPAWN node → set concurrency → save → reload shows values.
+- [x] State catalog documented in UI help / palette tooltips matches this doc. *(C4)*
+- [x] DSL round-trip includes `inputSchema` / `outputSchema` / `SpawnConfigV2` fields. *(C1)*
+- [x] Lint fails on unknown signal and on SPAWN skill ref missing from registry. *(C6)*
+- [x] Credentials UI can activate ≥2 keys; AI inspector lists union of discovered models. *(C3)*
+- [x] SPAWN inspector exposes maxConcurrency, tool pack, skill pack. *(C1)*
+- [x] Unit tests cover transition resolver allowlist + SYS_FUNC skip rewiring. *(C5, `packages/fsm-engine`)*
+- [x] Playwright: add SPAWN node → set concurrency → save → reload shows values. *(C1)*
+- [x] SYS_FUNC enable/disable + rewire + severity lint. *(C2)*
+- [x] HTTP / VALIDATE / EXTERNAL_AI authoring + grouped palette. *(C4)*
+- [x] Engine run API writes events for START→…→END walks. *(C5)*

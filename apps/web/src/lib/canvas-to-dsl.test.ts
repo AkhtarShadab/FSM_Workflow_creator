@@ -138,9 +138,45 @@ describe("canvasToDsl spawn v2", () => {
     expect(ai.llm.credentialId).toBe("cred_1");
     expect(ai.llm.model).toBe("gpt-4o");
   });
+
+  it("emits SYS_FUNC enable/disable/rewire arrays", () => {
+    const canvas: CanvasData = {
+      nodes: [
+        node("S0", "START"),
+        node("SF1", "SYSTEM_FUNCTION", {
+          systemFunction: {
+            summaryStrategy: "llm",
+            enabledStateIds: ["S0", "END"],
+            disabledStateIds: ["SC1"],
+            rewire: [{ from: "S0", on: "::SCRIPT.NEXT", to: "END" }],
+          },
+        }),
+        node("SC1", "SCRIPT"),
+        node("END", "END"),
+      ],
+      edges: [
+        edge("e1", "S0", "SF1", "::SCRIPT.NEXT"),
+        edge("e2", "SF1", "SC1", "::SYSTEM.CHECKPOINT"),
+        edge("e3", "SC1", "END", "::SCRIPT.NEXT"),
+      ],
+    };
+    const dsl = canvasToDsl(canvas);
+    const sf = dsl.states.find((s: { id: string }) => s.id === "SF1") as {
+      checkpoint: {
+        enabledStateIds: string[];
+        disabledStateIds: string[];
+        rewire: Array<{ from: string; on: string; to: string }>;
+      };
+    };
+    expect(sf.checkpoint.enabledStateIds).toEqual(["S0", "END"]);
+    expect(sf.checkpoint.disabledStateIds).toEqual(["SC1"]);
+    expect(sf.checkpoint.rewire).toEqual([
+      { from: "S0", on: "::SCRIPT.NEXT", to: "END" },
+    ]);
+  });
 });
 
-describe("lintCanvas C1", () => {
+describe("lintCanvas C1 (severity)", () => {
   it("warns when SPAWN has empty tool pack", () => {
     const canvas: CanvasData = {
       nodes: [
@@ -154,8 +190,13 @@ describe("lintCanvas C1", () => {
         edge("e3", "SP1", "END", "::SCRIPT.ERROR"),
       ],
     };
-    const warnings = lintCanvas(canvas);
-    expect(warnings.some((w) => w.includes("empty tool pack"))).toBe(true);
+    const issues = lintCanvas(canvas);
+    expect(
+      issues.some(
+        (i) =>
+          i.code === "SPAWN_EMPTY_TOOL_PACK" && i.severity === "warning"
+      )
+    ).toBe(true);
   });
 
   it("warns when runnable state lacks error edge", () => {
@@ -170,11 +211,15 @@ describe("lintCanvas C1", () => {
         edge("e2", "SC1", "END", "::SCRIPT.NEXT"),
       ],
     };
-    const warnings = lintCanvas(canvas);
-    expect(warnings.some((w) => w.includes("no error-routing edge"))).toBe(true);
+    const issues = lintCanvas(canvas);
+    expect(
+      issues.some(
+        (i) => i.code === "MISSING_ERROR_EDGE" && i.severity === "warning"
+      )
+    ).toBe(true);
   });
 
-  it("warns on heterogeneous profile/count mismatch", () => {
+  it("errors on heterogeneous profile/count mismatch", () => {
     const spawn = defaultSpawnConfig();
     spawn.mode = "heterogeneous";
     spawn.count = 3;
@@ -191,9 +236,12 @@ describe("lintCanvas C1", () => {
         edge("e3", "SP1", "END", "::SCRIPT.ERROR"),
       ],
     };
-    const warnings = lintCanvas(canvas);
+    const issues = lintCanvas(canvas);
     expect(
-      warnings.some((w) => w.includes("heterogeneous mode requires profiles.length"))
+      issues.some(
+        (i) =>
+          i.code === "SPAWN_PROFILE_MISMATCH" && i.severity === "error"
+      )
     ).toBe(true);
   });
 });
