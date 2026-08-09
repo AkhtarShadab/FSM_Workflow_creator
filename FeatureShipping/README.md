@@ -36,14 +36,20 @@ Every feature doc should include:
 8. **Suggested implementation phases** — for `ship-feature`
 9. **Acceptance criteria** — for `test-feature`
 
+Design-status stubs may start as concise **What / How / Why** plus goals and open questions, then expand via **detail-feature**.
+
 ## Index
 
 | Doc | Feature | Status |
 |-----|---------|--------|
 | [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents, engine, registry | **Complete** (C1–C7) — Round 2: SYS_FUNC router heads, SPAWN/AGGREGATE cardinality, HUMAN + self-loops, richer connection kinds |
-| [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | Detailed |
-
-Calendar and Notifications are deferred to later FeatureShipping docs.
+| [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | **Detailed** |
+| [003-live-executors.md](003-live-executors.md) | Real AI + HTTP executors streaming into run events | **Design** |
+| [004-harness-export.md](004-harness-export.md) | Export wizard → Docker/Git runnable harness | **Design** |
+| [005-credential-security.md](005-credential-security.md) | Encrypted credentials + SSRF-safe discovery | **Design** |
+| [006-ci-pipeline.md](006-ci-pipeline.md) | GitHub Actions: typecheck, unit tests, later Playwright | **Design** |
+| [007-calendar.md](007-calendar.md) | Calendar scheduling UI (replaces "Soon" tile) | **Design** |
+| [008-notifications.md](008-notifications.md) | In-app notifications for runs / schedules / budgets | **Design** |
 
 ## Naming
 

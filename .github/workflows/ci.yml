@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master, "cursor/**"]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck & unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck web
+        run: pnpm --filter web exec tsc --noEmit
+
+      - name: Unit tests (web)
+        run: pnpm --filter web test
+
+      - name: Unit tests (fsm-engine)
+        if: hashFiles('packages/fsm-engine/package.json') != ''
+        run: pnpm --filter @fsm/engine test
+
+      # Lint is intentionally non-blocking until eslint noise is cleaned up.
+      - name: Lint web (allow failure)
+        continue-on-error: true
+        run: pnpm --filter web lint
+
+      # Playwright E2E is optional in CI for now (needs browsers + app server).
+      # - name: Playwright
+      #   run: pnpm --filter web test:e2e
