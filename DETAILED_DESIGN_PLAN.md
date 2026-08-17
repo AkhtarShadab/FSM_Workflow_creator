@@ -304,6 +304,9 @@ Canonical set (v1):
 | `::SYSTEM.DEHYDRATE\|checkpoint_id=...` | System Function | persist context slice, return checkpoint ref |
 | `::SYSTEM.HYDRATE\|checkpoint_id=...` | System Function | load summary + cluster schemas |
 | `::SYSTEM.HALT\|reason=...` | any | stop run, persist final checkpoint |
+| `::STATE.ENTER` / `EXIT` / `RETRY` / `SUCCESS` / `FAIL` | engine | lifecycle of any state (013/014); optional edges |
+| `::TRANSITION.TAKEN` / `BLOCKED` / `VERIFY_FAIL` | engine | resolver / success-verifier outcomes |
+| `::AI.TOOL_DENIED` | AI executor | disallowed tool; **stops** the AI turn (014) |
 
 Parser: hand-rolled tokenizer (~150 LOC, zero deps) in `packages/fsm-engine/src/parser/`
 with a golden-file test corpus (valid + malformed signals).
@@ -947,6 +950,7 @@ Grouped; each tagged with where it blocks.
 
 ### FSM engine
 - **Q5.** Custom user signals (`::MYAPP.*`) — allowed? Namespacing/collision rules?
+  **Locked (FeatureShipping 013):** yes. Reserved namespaces `SCRIPT` `HTTP` `VALIDATE` `AI` `EXTERNAL_AI` `HUMAN` `SPAWN` `SYSTEM` `STATE` `TRANSITION` cannot be registered. Collision = exact string. Engine-owned lifecycle: `::STATE.ENTER|EXIT|RETRY|SUCCESS|FAIL`, `::TRANSITION.TAKEN|BLOCKED|VERIFY_FAIL`.
 - **Q6.** Subagent aggregation: is `waitAll | quorum(k) | firstSuccess` the right v1 set?
   Partial-result merge semantics on timeout?
 - **Q7.** Cycles: are loops first-class (with max-iteration guard) or rejected at author time?

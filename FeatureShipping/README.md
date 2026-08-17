@@ -60,6 +60,8 @@ Sequencing lives in [000-completion-roadmap.md](000-completion-roadmap.md):
 | [010-tool-runtime-grpc.md](010-tool-runtime-grpc.md) | Python / Bash tools over gRPC, sandboxed | 2 | **Detailed** |
 | [011-token-and-observability.md](011-token-and-observability.md) | State 0 hydration, SYS_FUNC checkpoints, token ledger, budgets | 1 | **Detailed** |
 | [012-copilot.md](012-copilot.md) | Zod-validated tool-calling copilot replacing stub mode | 4 | **Detailed** |
+| [013-state-signal-catalog.md](013-state-signal-catalog.md) | Segregated palette, STATE/TRANSITION signals, add-state/add-signal procedure | 5 | **Detailed** |
+| [014-run-contract.md](014-run-contract.md) | Per-state retry, success verify, resume cursor, tool grants, memory drop | 5 | **Detailed** |
 
 ## Naming
 

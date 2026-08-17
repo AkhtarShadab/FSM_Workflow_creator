@@ -337,6 +337,8 @@ Reference UI today: [`fsm-canvas.tsx`](../apps/web/src/components/canvas/fsm-can
 - Live provider gateway for AI/EXTERNAL_AI (keys still client-stub; AES server storage §14).
 - gRPC native SCRIPT bridge; `worker_threads` upgrade for SPAWN.
 - Live HUMAN approval bridge (C7 stubs auto-`::HUMAN.APPROVE` in platform runs).
+- **Custom catalog expansion, STATE/TRANSITION signals, add-state/add-signal procedure** → [013](013-state-signal-catalog.md).
+- **Per-state retry events, success verifier, resume cursor, tool grants, per-state memory drop** → [014](014-run-contract.md).
 
 Detail/revise this doc with **detail-feature** (high-end) only.
 
