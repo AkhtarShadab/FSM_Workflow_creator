@@ -6,7 +6,7 @@
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm --filter web exec tsc --noEmit",
-    "test": "pnpm --filter web test && pnpm --filter @fsm/engine test",
+    "test": "pnpm --filter web test && pnpm --filter @fsm/engine test && pnpm --filter @fsm/schema test",
     "test:e2e": "pnpm --filter web test:e2e",
     "db:migrate": "pnpm --filter web db:migrate"
   }
