@@ -1,0 +1,21 @@
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    env_file:
+      - .env
+    environment:
+      TOOL_LANGUAGE: {{toolLanguage}}
+      TOOL_SERVICE: tools-{{toolLanguage}}
+    depends_on:
+      - tools-{{toolLanguage}}
+    volumes:
+      - ./fsm.json:/app/fsm.json:ro
+      - ./tools:/app/tools:ro
+  tools-{{toolLanguage}}:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools-{{toolLanguage}}
+    volumes:
+      - ./tools:/tools:ro

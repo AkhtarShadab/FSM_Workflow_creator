@@ -44,6 +44,14 @@ jobs:
         if: hashFiles('packages/fsm-engine/package.json') != ''
         run: pnpm --filter @fsm/engine test
 
+      - name: Typecheck (export-engine)
+        if: hashFiles('packages/export-engine/package.json') != ''
+        run: pnpm --filter @fsm/export-engine typecheck
+
+      - name: Unit tests (export-engine)
+        if: hashFiles('packages/export-engine/package.json') != ''
+        run: pnpm --filter @fsm/export-engine test
+
       # Lint is intentionally non-blocking until eslint noise is cleaned up.
       - name: Lint web (allow failure)
         continue-on-error: true

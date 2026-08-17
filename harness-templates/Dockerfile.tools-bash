@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+WORKDIR /tools
+COPY tools /tools
+# Bash SCRIPT sources; the gRPC shim lands with the tool runtime.
+CMD ["python", "-c", "print('tools-bash waiting for gRPC runtime')"]

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "states": [
+    {
+      "transitions": [{ "to": "fetch_pages", "on": "::SCRIPT.NEXT" }],
+      "type": "START",
+      "id": "START"
+    },
+    {
+      "id": "fetch_pages",
+      "label": "Fetch pages",
+      "type": "SCRIPT",
+      "script": {
+        "language": "python",
+        "code": "print(\"::SCRIPT.NEXT\")\n",
+        "toolName": "fetch_pages"
+      },
+      "transitions": [{ "on": "::SCRIPT.NEXT", "to": "END" }]
+    },
+    {
+      "type": "END",
+      "id": "END",
+      "transitions": []
+    }
+  ],
+  "name": "linear-demo"
+}
