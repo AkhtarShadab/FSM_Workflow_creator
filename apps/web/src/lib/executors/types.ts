@@ -1,4 +1,5 @@
 import type { EngineState, Emission } from "@fsm/engine";
+import type { PhaseMap } from "@/lib/context/phase-map";
 import type { StateNodeData } from "@/lib/fsm-types";
 
 export type RunEventKind =
@@ -46,6 +47,12 @@ export interface ExecutorContext {
   payload: unknown;
   signal: AbortSignal;
   emit(ev: RunEventDraft, opts?: EmitOptions): Promise<void>;
+  /**
+   * Run-level State 0 phase map (011 T1). Built once per executeRun and
+   * attached to every state; the supervisor prepends `formatPhaseMap` to the
+   * first AI / EXTERNAL_AI system prompt only.
+   */
+  phaseMap?: PhaseMap;
 }
 
 export type Executor = (ctx: ExecutorContext) => Promise<Emission>;

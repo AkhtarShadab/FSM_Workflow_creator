@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { mockAdapter } from "@fsm/byok-gateway";
-import type { StateNodeData } from "@/lib/fsm-types";
+import { defaultNodeData, type StateNodeData } from "@/lib/fsm-types";
 import { createAiExecutor } from "@/lib/executors/ai";
 import { getExecutor } from "@/lib/executors/registry";
 import {
@@ -167,5 +167,52 @@ describe("run supervisor", () => {
         expect(blob).not.toMatch(/"apiKey"/);
       }
     }
+  });
+
+  it("prepends the phase map to the first AI system prompt only", async () => {
+    const store = createMemoryRunStore();
+    const prompts: string[] = [];
+    const maps: Array<{ estimatedTokens: number } | undefined> = [];
+    const supervisor = createRunSupervisor({
+      store,
+      getExecutor: (type) => async (ctx) => {
+        if (type === "AI") {
+          prompts.push(ctx.node?.data.ai.systemPrompt ?? "");
+          maps.push(ctx.phaseMap);
+          return "::AI.NEXT";
+        }
+        return getExecutor(type)(ctx);
+      },
+    });
+    const ai1 = defaultNodeData("AI", "First");
+    ai1.ai.systemPrompt = "You are helpful.";
+    const ai2 = defaultNodeData("AI", "Second");
+    ai2.ai.systemPrompt = "Second brain.";
+    await supervisor.executeRun(42, {
+      states: [
+        { id: "S0", type: "START" },
+        { id: "AI1", type: "AI" },
+        { id: "AI2", type: "AI" },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "S0", on: "::SCRIPT.NEXT", to: "AI1" },
+        { from: "AI1", on: "::AI.NEXT", to: "AI2" },
+        { from: "AI2", on: "::AI.NEXT", to: "END" },
+      ],
+      nodesById: new Map([
+        ["AI1", { id: "AI1", data: ai1 }],
+        ["AI2", { id: "AI2", data: ai2 }],
+      ]),
+    });
+    expect(store.statuses.get(42)).toBe("succeeded");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("Phase map:");
+    expect(prompts[0]).toContain("You are helpful.");
+    expect(prompts[1]).toBe("Second brain.");
+    expect(prompts[1]).not.toContain("Phase map:");
+    expect(maps[0]?.estimatedTokens).toBeGreaterThan(0);
+    expect(maps[0]?.estimatedTokens).toBeLessThanOrEqual(400);
+    expect(maps[1]).toBe(maps[0]);
   });
 });

@@ -1,7 +1,13 @@
 import { db } from "@/db";
 import { fsmDefinitions, runEvents, runs } from "@/db/schema";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
-import type { CanvasData, StateNodeData } from "@/lib/fsm-types";
+import {
+  buildPhaseMap,
+  engineGraphToDsl,
+  formatPhaseMap,
+  type PhaseMap,
+} from "@/lib/context/phase-map";
+import { defaultNodeData, type CanvasData, type StateNodeData } from "@/lib/fsm-types";
 import { getExecutor } from "@/lib/executors/registry";
 import type {
   Executor,
@@ -255,11 +261,24 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     return event;
   }
 
+  /**
+   * T1 phase-map injection (FeatureShipping 011 / design plan §7.1):
+   *
+   * Choice: run-level `ExecutorContext.phaseMap` built once at executeRun
+   * start, **and** prepend `formatPhaseMap()` to the first AI / EXTERNAL_AI
+   * node's system prompt (cloned node; the canvas is not mutated). Later AI
+   * states are left unchanged — SYS_FUNC hydrate (T2) re-injects at cluster
+   * boundaries. The LLM therefore sees the map only when an AI state is
+   * reached, matching State 0 protocol step 3.
+   */
   function wrapExecute(
     runId: number,
     nodesById: Map<string, { id: string; data: StateNodeData }>,
-    custom?: StateExecutor
+    custom?: StateExecutor,
+    phaseMap?: PhaseMap
   ): StateExecutor {
+    let firstAiInjected = false;
+    const phaseMapText = phaseMap ? formatPhaseMap(phaseMap) : "";
     return async ({ state, payload, signal }) => {
       if (signal.aborted) {
         throw new DOMException("Aborted", "AbortError");
@@ -270,13 +289,20 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         payload: { type: state.type },
       });
       const started = Date.now();
+      const isAi = state.type === "AI" || state.type === "EXTERNAL_AI";
+      let node = nodesById.get(state.id);
+      if (phaseMap && isAi && !firstAiInjected) {
+        firstAiInjected = true;
+        node = withPhaseMapPrompt(node, state, phaseMapText);
+      }
       const ctx: ExecutorContext = {
         runId,
         state,
-        node: nodesById.get(state.id),
+        node,
         payload,
         signal,
         emit: (draft, opts) => emit(runId, draft, opts).then(() => undefined),
+        phaseMap,
       };
       try {
         const emission: Emission = custom
@@ -348,6 +374,9 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         ])
       );
 
+    const dsl = canvas ? canvasToDsl(canvas) : engineGraphToDsl(states, edges);
+    const phaseMap = buildPhaseMap(dsl);
+
     const controller = ensureController(runId);
 
     const done = (async () => {
@@ -355,7 +384,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         const result = await runFsm({
           states,
           edges,
-          executeState: wrapExecute(runId, nodesById, opts.executeState),
+          executeState: wrapExecute(runId, nodesById, opts.executeState, phaseMap),
           executeChild: async () => ({ stub: true }),
           abortSignal: controller.signal,
         });
@@ -524,4 +553,37 @@ export function subscribeToRun(
 
 export async function listRunEventsAfter(runId: number, afterId: number) {
   return runSupervisor.listEventsAfter(runId, afterId);
+}
+
+function withPhaseMapPrompt(
+  node: { id: string; data: StateNodeData } | undefined,
+  state: EngineState,
+  phaseMapText: string
+): { id: string; data: StateNodeData } {
+  const kind = state.type === "EXTERNAL_AI" ? "EXTERNAL_AI" : "AI";
+  const base = node?.data ?? defaultNodeData(kind, state.label ?? state.id);
+  const join = (prev: string | undefined) =>
+    prev?.trim() ? `${phaseMapText}\n\n${prev}` : phaseMapText;
+  if (state.type === "EXTERNAL_AI") {
+    return {
+      id: node?.id ?? state.id,
+      data: {
+        ...base,
+        externalAi: {
+          ...base.externalAi,
+          systemPrompt: join(base.externalAi?.systemPrompt),
+        },
+      },
+    };
+  }
+  return {
+    id: node?.id ?? state.id,
+    data: {
+      ...base,
+      ai: {
+        ...base.ai,
+        systemPrompt: join(base.ai?.systemPrompt),
+      },
+    },
+  };
 }
