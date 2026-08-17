@@ -22,5 +22,11 @@ export default defineConfig({
         url: BASE,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
+        env: {
+          ...process.env,
+          PLATFORM_SECRET:
+            process.env.PLATFORM_SECRET ?? "e2e-platform-secret-not-for-production",
+          FSM_MOCK_PROVIDER: process.env.FSM_MOCK_PROVIDER ?? "1",
+        },
       },
 });

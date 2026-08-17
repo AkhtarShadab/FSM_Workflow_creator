@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { startProjectRun } from "@/lib/run-engine";
+import { runSupervisor } from "@/lib/run-supervisor";
 import type { CanvasData } from "@/lib/fsm-types";
 
 export async function POST(
@@ -27,8 +27,8 @@ export async function POST(
   }
 
   try {
-    const result = await startProjectRun(projectId, body.canvas);
-    return NextResponse.json(result);
+    const { runId } = await runSupervisor.start(projectId, body.canvas);
+    return NextResponse.json({ runId }, { status: 202 });
   } catch (err) {
     return NextResponse.json(
       {

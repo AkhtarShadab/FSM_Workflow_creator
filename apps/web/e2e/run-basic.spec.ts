@@ -255,12 +255,49 @@ test("START → SCRIPT → END run shows engine events", async ({ page }) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ canvas }),
     });
-    return res.json();
+    const body = (await res.json()) as { runId?: number; error?: string };
+    if (res.status !== 202 || body.runId == null) {
+      return { httpStatus: res.status, body, events: [] as Array<{ kind: string; stateId: string }> };
+    }
+    const events = await new Promise<Array<{ kind: string; stateId: string }>>(
+      (resolve, reject) => {
+        const acc: Array<{ kind: string; stateId: string }> = [];
+        const es = new EventSource(`/api/runs/${body.runId}/stream`);
+        const timer = setTimeout(() => {
+          es.close();
+          reject(new Error("SSE timeout"));
+        }, 20_000);
+        const onFrame = (kind: string, ev: MessageEvent<string>) => {
+          const data = JSON.parse(ev.data) as { kind?: string; stateId?: string };
+          acc.push({ kind: data.kind ?? kind, stateId: data.stateId ?? "" });
+          if (kind === "run.complete" || kind === "run.failed") {
+            clearTimeout(timer);
+            es.close();
+            resolve(acc);
+          }
+        };
+        for (const kind of [
+          "state.start",
+          "state.output",
+          "state.transition",
+          "state.error",
+          "run.complete",
+          "run.failed",
+        ]) {
+          es.addEventListener(kind, (ev) =>
+            onFrame(kind, ev as MessageEvent<string>)
+          );
+        }
+        es.onerror = () => {
+          /* keep open through reconnect until terminal event */
+        };
+      }
+    );
+    return { httpStatus: res.status, body, events };
   }, projectUrl.split("/").pop());
 
-  expect(result.status).toBe("succeeded");
-  expect(result.events?.length).toBeGreaterThan(0);
-  expect(result.events.some((e: { stateId: string }) => e.stateId === "END")).toBe(
-    true
-  );
+  expect(result.httpStatus).toBe(202);
+  expect(result.body.runId).toBeGreaterThan(0);
+  expect(result.events.length).toBeGreaterThan(0);
+  expect(result.events.some((e) => e.kind === "run.complete")).toBe(true);
 });

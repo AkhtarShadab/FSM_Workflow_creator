@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1", "localhost"],
-  transpilePackages: ["@fsm/engine"],
+  transpilePackages: ["@fsm/engine", "@fsm/byok-gateway"],
 };
 
 export default nextConfig;
