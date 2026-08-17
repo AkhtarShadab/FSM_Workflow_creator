@@ -35,6 +35,7 @@ test("palette groups and HTTP URL persist", async ({ page }) => {
   await expect(page.getByTestId("palette-groups")).toBeVisible();
   await expect(page.getByTestId("palette-group-flow")).toBeVisible();
   await expect(page.getByTestId("palette-group-work")).toBeVisible();
+  await expect(page.getByTestId("palette-group-generative")).toBeVisible();
   await expect(page.getByTestId("palette-group-control")).toBeVisible();
 
   await page

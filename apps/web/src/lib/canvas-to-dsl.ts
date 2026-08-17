@@ -16,6 +16,8 @@ import {
   emptyRegistry,
   isKnownSignal,
   isKnownSkill,
+  RESERVED_NAMESPACES,
+  signalNamespace,
   type ProjectRegistry,
 } from "./registry";
 
@@ -39,7 +41,11 @@ export interface LintContext {
  */
 export function canvasToDsl(
   canvas: CanvasData,
-  meta: { name?: string; version?: number } = {}
+  meta: {
+    name?: string;
+    version?: number;
+    registry?: ProjectRegistry;
+  } = {}
 ) {
   const { nodes, edges } = canvas;
 
@@ -74,6 +80,15 @@ export function canvasToDsl(
       type: node.data.stateType,
       label: node.data.label,
       ...(node.data.description ? { description: node.data.description } : {}),
+      ...(node.data.customTypeId
+        ? { customTypeId: node.data.customTypeId }
+        : {}),
+      ...(node.data.successCondition
+        ? { successCondition: node.data.successCondition }
+        : {}),
+      ...(node.data.stateType === "END" && node.data.terminal
+        ? { terminal: node.data.terminal }
+        : {}),
       ...verifiability,
       transitions,
     };
@@ -242,6 +257,9 @@ export function canvasToDsl(
     },
     clusters: [],
     states,
+    extensions: {
+      registry: meta.registry ?? emptyRegistry(),
+    },
   };
 }
 
@@ -620,10 +638,20 @@ export function lintCanvas(
     }
   }
 
-  // C6 — unknown edge signals
+  // C6 — unknown / reserved edge signals
   for (const e of edges) {
     const signal = e.data?.signal ?? "::SCRIPT.NEXT";
-    if (!isKnownSignal(signal, registry)) {
+    const ns = signalNamespace(signal);
+    if (RESERVED_NAMESPACES.has(ns) && !isKnownSignal(signal, registry)) {
+      issues.push(
+        issue(
+          "error",
+          "SIGNAL_RESERVED",
+          `Edge ${e.id}: signal "${signal}" uses reserved namespace ${ns}.`,
+          e.source
+        )
+      );
+    } else if (!isKnownSignal(signal, registry)) {
       issues.push(
         issue(
           "error",
@@ -632,6 +660,24 @@ export function lintCanvas(
           e.source
         )
       );
+    }
+  }
+
+  // START legacy default edge warning
+  for (const e of edges) {
+    const source = nodes.find((n) => n.id === e.source);
+    if (source?.data.stateType === "START") {
+      const signal = e.data?.signal ?? "::SCRIPT.NEXT";
+      if (signal === "::SCRIPT.NEXT") {
+        issues.push(
+          issue(
+            "warning",
+            "START_LEGACY_SIGNAL",
+            `Edge ${e.id}: START still uses legacy ::SCRIPT.NEXT (prefer ::STATE.SUCCESS).`,
+            e.source
+          )
+        );
+      }
     }
   }
 

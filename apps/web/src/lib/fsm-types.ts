@@ -14,6 +14,60 @@ export type FSMStateType =
   | "SYSTEM_FUNCTION"
   | "END";
 
+export type PaletteGroupId =
+  | "flow"
+  | "work"
+  | "generative"
+  | "control"
+  | "custom";
+
+export interface StateSignalKit {
+  success: string;
+  failure: string;
+  extras?: string[];
+}
+
+export const STATE_SIGNAL_KITS: Record<FSMStateType, StateSignalKit> = {
+  START: { success: "::STATE.SUCCESS", failure: "::STATE.FAIL" },
+  END: { success: "::STATE.EXIT", failure: "::STATE.FAIL" },
+  SCRIPT: { success: "::SCRIPT.NEXT", failure: "::SCRIPT.ERROR" },
+  HTTP: { success: "::HTTP.NEXT", failure: "::HTTP.ERROR" },
+  VALIDATE: { success: "::VALIDATE.NEXT", failure: "::VALIDATE.ERROR" },
+  AI: {
+    success: "::AI.NEXT",
+    failure: "::AI.ERROR",
+    extras: ["::AI.GENERATE", "::AI.VALIDATION_ERROR", "::AI.TOOL_DENIED"],
+  },
+  EXTERNAL_AI: {
+    success: "::EXTERNAL_AI.NEXT",
+    failure: "::EXTERNAL_AI.ERROR",
+  },
+  HUMAN: {
+    success: "::HUMAN.APPROVE",
+    failure: "::HUMAN.REJECT",
+    extras: ["::HUMAN.EDIT", "::HUMAN.TIMEOUT"],
+  },
+  SPAWN: { success: "::SPAWN.SUBAGENTS", failure: "::SPAWN.ERROR" },
+  AGGREGATE: { success: "::STATE.SUCCESS", failure: "::STATE.FAIL" },
+  SYSTEM_FUNCTION: {
+    success: "::SYSTEM.HYDRATE",
+    failure: "::SYSTEM.HALT",
+    extras: ["::SYSTEM.DEHYDRATE"],
+  },
+};
+
+export type SuccessCondition =
+  | { kind: "signal" }
+  | { kind: "schema"; schema: string }
+  | { kind: "predicate"; expr: string }
+  | {
+      kind: "llm_verify";
+      credentialId: string;
+      modelId: string;
+      rubric: string;
+      onFail: "retry" | "error_signal";
+    };
+
 export type ToolLanguage = "python" | "cpp" | "bash";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -182,6 +236,11 @@ export interface StateNodeData extends Record<string, unknown> {
   stateType: FSMStateType;
   label: string;
   description: string;
+  /** Project-registered custom type id (palette Custom group) */
+  customTypeId?: string;
+  /** END terminal mode — error is END with terminal: "error" */
+  terminal?: "success" | "error";
+  successCondition?: SuccessCondition;
   inputSchema: string;
   outputSchema: string;
   verify: VerifyConfig;
@@ -275,8 +334,10 @@ export const SIGNAL_PRESETS: { signal: string; kind: EdgeKind; hint: string }[] 
   { signal: "::VALIDATE.NEXT", kind: "script", hint: "validation passed" },
   { signal: "::VALIDATE.ERROR", kind: "script", hint: "validation failed" },
   { signal: "::AI.NEXT", kind: "ai", hint: "transition after generation" },
+  { signal: "::AI.ERROR", kind: "ai", hint: "executor / model failure" },
   { signal: "::AI.GENERATE", kind: "ai", hint: "chained generation" },
   { signal: "::AI.VALIDATION_ERROR", kind: "ai", hint: "schema failure route" },
+  { signal: "::AI.TOOL_DENIED", kind: "ai", hint: "tool grant denied (014)" },
   { signal: "::EXTERNAL_AI.NEXT", kind: "ai", hint: "external AI success" },
   { signal: "::EXTERNAL_AI.ERROR", kind: "ai", hint: "external AI failure" },
   { signal: "::HUMAN.APPROVE", kind: "system", hint: "human approved" },
@@ -284,6 +345,15 @@ export const SIGNAL_PRESETS: { signal: string; kind: EdgeKind; hint: string }[] 
   { signal: "::HUMAN.EDIT", kind: "system", hint: "human requested edits" },
   { signal: "::HUMAN.TIMEOUT", kind: "system", hint: "approval timed out" },
   { signal: "::SPAWN.SUBAGENTS", kind: "spawn", hint: "fan out child runs" },
+  { signal: "::SPAWN.ERROR", kind: "spawn", hint: "spawn fan-out failure" },
+  { signal: "::STATE.ENTER", kind: "script", hint: "state entered (lifecycle)" },
+  { signal: "::STATE.EXIT", kind: "script", hint: "state exited after transition" },
+  { signal: "::STATE.RETRY", kind: "script", hint: "guardrail retry scheduled" },
+  { signal: "::STATE.SUCCESS", kind: "script", hint: "success condition passed" },
+  { signal: "::STATE.FAIL", kind: "script", hint: "success condition failed" },
+  { signal: "::TRANSITION.TAKEN", kind: "script", hint: "resolver picked edge" },
+  { signal: "::TRANSITION.BLOCKED", kind: "script", hint: "emission matched no edge" },
+  { signal: "::TRANSITION.VERIFY_FAIL", kind: "script", hint: "LLM verifier rejected hop" },
   { signal: "::SYSTEM.DEHYDRATE", kind: "system", hint: "persist context slice" },
   { signal: "::SYSTEM.HYDRATE", kind: "system", hint: "load summary + schemas" },
   { signal: "::SYSTEM.HALT", kind: "system", hint: "stop run with checkpoint" },
@@ -362,38 +432,30 @@ export const STATE_COLORS: Record<
   },
 };
 
-/** Default signal emitted when connecting FROM a state type (§6.1) */
-export const DEFAULT_SIGNALS: Record<FSMStateType, string> = {
-  START: "::SCRIPT.NEXT",
-  SCRIPT: "::SCRIPT.NEXT",
-  HTTP: "::HTTP.NEXT",
-  AI: "::AI.NEXT",
-  EXTERNAL_AI: "::EXTERNAL_AI.NEXT",
-  VALIDATE: "::VALIDATE.NEXT",
-  HUMAN: "::HUMAN.APPROVE",
-  SPAWN: "::SPAWN.SUBAGENTS",
-  AGGREGATE: "::SCRIPT.NEXT",
-  SYSTEM_FUNCTION: "::SYSTEM.HYDRATE",
-  END: "::SYSTEM.HALT",
-};
+/** Default signal emitted when connecting FROM a state type (derived from kits) */
+export const DEFAULT_SIGNALS = Object.fromEntries(
+  Object.entries(STATE_SIGNAL_KITS).map(([type, kit]) => [type, kit.success])
+) as Record<FSMStateType, string>;
 
-/** Palette groups for the canvas toolbar (FeatureShipping 001 §3.1) */
+/** Palette groups for the canvas toolbar (FeatureShipping 013 §1) */
 export const PALETTE_GROUPS: {
-  id: "flow" | "work" | "control";
+  id: PaletteGroupId;
   label: string;
   types: FSMStateType[];
 }[] = [
   { id: "flow", label: "Flow", types: ["START", "END"] },
+  { id: "work", label: "Work", types: ["SCRIPT", "HTTP", "VALIDATE"] },
   {
-    id: "work",
-    label: "Work",
-    types: ["SCRIPT", "HTTP", "AI", "EXTERNAL_AI", "VALIDATE", "HUMAN"],
+    id: "generative",
+    label: "Generative",
+    types: ["AI", "EXTERNAL_AI", "HUMAN"],
   },
   {
     id: "control",
     label: "Control",
     types: ["SYSTEM_FUNCTION", "SPAWN", "AGGREGATE"],
   },
+  { id: "custom", label: "Custom", types: [] },
 ];
 
 export const STATE_CATALOG: Record<
@@ -619,18 +681,7 @@ export function defaultNodeData(
   stateType: FSMStateType,
   label: string
 ): StateNodeData {
-  const errorSignal =
-    stateType === "AI"
-      ? "::AI.VALIDATION_ERROR"
-      : stateType === "EXTERNAL_AI"
-        ? "::EXTERNAL_AI.ERROR"
-        : stateType === "HTTP"
-          ? "::HTTP.ERROR"
-          : stateType === "VALIDATE"
-            ? "::VALIDATE.ERROR"
-            : stateType === "HUMAN"
-              ? "::HUMAN.REJECT"
-              : "::SCRIPT.ERROR";
+  const kit = STATE_SIGNAL_KITS[stateType];
 
   return {
     stateType,
@@ -639,7 +690,7 @@ export function defaultNodeData(
     inputSchema: "",
     outputSchema: "",
     verify: { kind: "schema" },
-    onError: { signal: errorSignal },
+    onError: { signal: kit.failure },
     script: {
       toolName: `${label.toLowerCase().replace(/\s+/g, "_")}_tool`,
       language: "python",
