@@ -1,4 +1,15 @@
-export { parseSignal, type Emission, type ParsedSignal, type StructuredEmission } from "./signals";
+export {
+  parseSignal,
+  formatStateEnter,
+  formatStateRetry,
+  formatStateSuccess,
+  formatStateFail,
+  DEFAULT_RETRY_ON,
+  type Emission,
+  type ParsedSignal,
+  type StructuredEmission,
+  type RetryReason,
+} from "./signals";
 export {
   resolveTransition,
   type EngineEdge,
@@ -32,4 +43,3 @@ export {
   type RunFsmResult,
   type StateExecutor,
 } from "./runner";
-export type { RetryReason } from "./signals";

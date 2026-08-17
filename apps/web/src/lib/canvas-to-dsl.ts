@@ -76,6 +76,14 @@ export function canvasToDsl(
       ...(node.data.description ? { description: node.data.description } : {}),
       ...verifiability,
       transitions,
+      ...(node.data.successCondition
+        ? { successCondition: node.data.successCondition }
+        : {}),
+      ...(node.data.toolAccess ? { toolAccess: node.data.toolAccess } : {}),
+      ...(node.data.retainContext ? { retainContext: true } : {}),
+      ...(node.data.guardrails?.retryOn?.length
+        ? { guardrails: { retryOn: node.data.guardrails.retryOn } }
+        : {}),
     };
 
     switch (node.data.stateType) {

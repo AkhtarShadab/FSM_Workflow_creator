@@ -73,6 +73,7 @@ export interface RunStore {
   ): Promise<void>;
   markOrphanedRunning(): Promise<number>;
   getRunStatus?(runId: number): Promise<string | null>;
+  listRunIdsByStatus?(status: RunStatus): Promise<number[]>;
 }
 
 export interface EventBus {
@@ -151,6 +152,13 @@ export function createMemoryRunStore(): RunStore & {
     },
     async getRunStatus(runId) {
       return statuses.get(runId) ?? null;
+    },
+    async listRunIdsByStatus(status) {
+      const ids: number[] = [];
+      for (const [id, s] of statuses) {
+        if (s === status) ids.push(id);
+      }
+      return ids;
     },
   };
 }
@@ -239,6 +247,13 @@ export const drizzleRunStore: RunStore = {
       .where(eq(runs.id, runId))
       .limit(1);
     return row?.status ?? null;
+  },
+  async listRunIdsByStatus(status) {
+    const rows = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.status, status));
+    return rows.map((r) => r.id);
   },
 };
 
@@ -374,14 +389,28 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     const allowedTools = resolveAllowedTools(access, inherit);
     const timeoutMs = state.guardrails?.timeoutMs ?? 30_000;
     const exp = Date.now() + timeoutMs + 5_000;
+    const grants = new Map(
+      allowedTools.map((toolName) => [
+        toolName,
+        mintToolGrant({ runId, stateId: state.id, toolName, exp }),
+      ])
+    );
 
     return {
       allowedTools,
-      mintGrant: (toolName: string) =>
-        mintToolGrant({ runId, stateId: state.id, toolName, exp }),
+      mintGrant: (toolName: string) => {
+        const existing = grants.get(toolName);
+        if (existing) return existing;
+        const minted = mintToolGrant({ runId, stateId: state.id, toolName, exp });
+        grants.set(toolName, minted);
+        return minted;
+      },
       requireGrant: (toolName: string, grant?: ReturnType<typeof mintToolGrant>) => {
         assertToolInAllowlist(allowedTools, toolName);
-        const g = grant ?? mintToolGrant({ runId, stateId: state.id, toolName, exp });
+        const g =
+          grant ??
+          grants.get(toolName) ??
+          mintToolGrant({ runId, stateId: state.id, toolName, exp });
         if (!verifyToolGrant(g)) {
           assertToolInAllowlist([], toolName);
         }
@@ -560,10 +589,12 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
       event.payload && typeof event.payload === "object"
         ? (event.payload as Record<string, unknown>)
         : {};
+    const signal =
+      typeof extra.signal === "string" ? extra.signal : event.message;
     await emit(runId, {
       stateId: event.stateId,
       kind,
-      payload: { ...extra, message: event.message },
+      payload: { ...extra, message: event.message, signal },
     });
   }
 
@@ -809,6 +840,15 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     return { ok: true };
   }
 
+  async function resumeCrashedRuns(runIds: number[]): Promise<number> {
+    let n = 0;
+    for (const id of runIds) {
+      const result = await resume(id);
+      if (result.ok) n += 1;
+    }
+    return n;
+  }
+
   function cancel(runId: number): boolean {
     const active = registry.get(runId);
     if (!active) return false;
@@ -860,6 +900,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     beginRun,
     executeRun,
     resume,
+    resumeCrashedRuns,
     cancel,
     resumeHuman,
     subscribe,
