@@ -248,6 +248,10 @@ If two PRs collide, **the greenfield / test-only PR rebases**. Persistence and r
 
 ### 8.8 Suggested `ship-feature` invocation
 
-Each agent gets exactly one phase. Copy:
+Each agent gets exactly one phase. Prefer the project subagents in [`.cursor/agents/`](../.cursor/agents/README.md):
+
+> Use **ship-dispatcher** to name the next jobs, then spawn **schema-bootstrap** / **lane-persistence** / **lane-keys-ci** / **lane-greenfield** / **lane-runtime**.
+
+Copy-paste if invoking `ship-feature` directly:
 
 > Implement FeatureShipping **&lt;NNN&gt;** phase **&lt;id&gt;** with `ship-feature`. Stay inside that phase's file map. Do not edit `schema.ts` (owned by SB0). Do not edit files listed under another lane in `000-completion-roadmap.md` §8.2. Follow with `test-feature` on the same branch.

@@ -53,3 +53,6 @@ Then Wave 1 makes runs real ([003](FeatureShipping/003-live-executors.md),
 ([007](FeatureShipping/007-calendar.md), [012](FeatureShipping/012-copilot.md)).
 [002 Memory & code index](FeatureShipping/002-memory-and-code-index.md) runs in
 parallel at any time.
+
+To execute in parallel, start with the **ship-dispatcher** subagent
+([`.cursor/agents/`](.cursor/agents/README.md)), which fans out the four lanes.

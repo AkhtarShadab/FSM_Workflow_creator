@@ -68,8 +68,9 @@ Sequencing lives in [000-completion-roadmap.md](000-completion-roadmap.md):
 
 ## Skills
 
-| Skill | Path |
-|-------|------|
+| Skill / agent | Path |
+|---------------|------|
 | detail-feature | [`.cursor/skills/detail-feature/`](../.cursor/skills/detail-feature/) |
 | ship-feature | [`.cursor/skills/ship-feature/`](../.cursor/skills/ship-feature/) |
 | test-feature | [`.cursor/skills/test-feature/`](../.cursor/skills/test-feature/) |
+| Parallel lanes | [`.cursor/agents/`](../.cursor/agents/README.md) — `ship-dispatcher`, then `schema-bootstrap` / `lane-persistence` / `lane-keys-ci` / `lane-greenfield` / `lane-runtime` |
