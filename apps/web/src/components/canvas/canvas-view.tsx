@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { CopilotPanel } from "@/components/copilot/copilot-panel";
 import { FsmCanvas } from "@/components/canvas/fsm-canvas";
@@ -9,6 +9,24 @@ import { EdgeInspectorPanel } from "@/components/canvas/edge-inspector";
 import { InspectorPanel } from "@/components/inspector/inspector-panel";
 import { ProjectNav } from "@/components/nav/project-nav";
 import type { Project } from "@/db/schema";
+import { useCanvasStore } from "@/stores/canvas-store";
+
+function CanvasHydrator({ projectId }: { projectId: string }) {
+  const hydrateFromServer = useCanvasStore((s) => s.hydrateFromServer);
+
+  useEffect(() => {
+    const run = () => {
+      void hydrateFromServer(projectId);
+    };
+    if (useCanvasStore.persist.hasHydrated()) {
+      run();
+      return;
+    }
+    return useCanvasStore.persist.onFinishHydration(run);
+  }, [projectId, hydrateFromServer]);
+
+  return null;
+}
 
 export function CanvasView({ project }: { project: Project }) {
   const projectId = String(project.id);
@@ -23,6 +41,7 @@ export function CanvasView({ project }: { project: Project }) {
       />
       <main className="relative flex-1">
         <ReactFlowProvider>
+          <CanvasHydrator projectId={projectId} />
           <FsmCanvas projectId={projectId} projectName={project.name} />
           <InspectorPanel projectId={projectId} />
           <EdgeInspectorPanel projectId={projectId} />

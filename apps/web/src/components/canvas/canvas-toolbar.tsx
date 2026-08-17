@@ -1,18 +1,24 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
 import {
+  AlertCircle,
   Brain,
+  Check,
   Cloud,
+  CloudOff,
   Flag,
   GitBranch,
   Globe,
   Layers,
+  Loader2,
   Merge,
   Play,
   ShieldCheck,
   SquareTerminal,
   Spline,
+  Upload,
   UserRound,
 } from "lucide-react";
 import {
@@ -22,6 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { lintCanvas } from "@/lib/canvas-to-dsl";
+import { syncBadgeLabel } from "@/lib/draft-autosave";
 import { cn } from "@/lib/utils";
 import {
   PALETTE_GROUPS,
@@ -31,6 +39,8 @@ import {
   type FSMStateType,
 } from "@/lib/fsm-types";
 import { useCanvasStore } from "@/stores/canvas-store";
+import { useCredentialStore } from "@/stores/credential-store";
+import { useRegistryStore } from "@/stores/registry-store";
 import { DslPreviewDialog } from "./dsl-preview-dialog";
 
 const ICONS: Record<FSMStateType, typeof Play> = {
@@ -59,7 +69,60 @@ export function CanvasToolbar({
   const selectNode = useCanvasStore((s) => s.selectNode);
   const preferredSignal = useCanvasStore((s) => s.preferredSignal);
   const setPreferredSignal = useCanvasStore((s) => s.setPreferredSignal);
+  const syncStatus = useCanvasStore((s) => s.syncStatus);
+  const notice = useCanvasStore((s) => s.notice);
+  const versionCount = useCanvasStore((s) => s.versionCounts[projectId] ?? 0);
+  const publishProject = useCanvasStore((s) => s.publishProject);
+  const reloadFromServer = useCanvasStore((s) => s.reloadFromServer);
+  const overwriteServer = useCanvasStore((s) => s.overwriteServer);
+  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes);
+  const edges = useCanvasStore((s) => s.canvases[projectId]?.edges);
+  const credentials = useCredentialStore((s) => s.credentials);
+  const registry = useRegistryStore((s) => s.registry);
   const { screenToFlowPosition } = useReactFlow();
+  const [publishing, setPublishing] = useState(false);
+  const [online, setOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine
+  );
+
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
+  const lintErrors = useMemo(() => {
+    const issues = lintCanvas(
+      { nodes: nodes ?? [], edges: edges ?? [] },
+      {
+        registry,
+        credentials: credentials.map((c) => ({
+          id: c.id,
+          active: c.active,
+          models: c.models,
+        })),
+      }
+    );
+    return issues.filter((i) => i.severity === "error");
+  }, [nodes, edges, credentials, registry]);
+
+  const badge = syncBadgeLabel(syncStatus, online);
+  const publishDisabled = lintErrors.length > 0 || publishing;
+
+  const handlePublish = async () => {
+    if (publishDisabled) return;
+    setPublishing(true);
+    try {
+      await publishProject(projectId);
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   const handleAdd = (type: FSMStateType) => {
     const center = screenToFlowPosition({
@@ -174,6 +237,82 @@ export function CanvasToolbar({
         </Select>
         <div className="mx-1 h-5 w-px bg-foreground/10" />
         <DslPreviewDialog projectId={projectId} projectName={projectName} />
+        <div className="mx-1 h-5 w-px bg-foreground/10" />
+        {badge ? (
+          <span
+            data-testid="sync-badge"
+            data-sync-status={syncStatus}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium",
+              badge === "Saved" && "text-emerald-700 dark:text-emerald-400",
+              badge === "Saving…" && "text-muted-foreground",
+              badge === "Offline" && "text-amber-700 dark:text-amber-400",
+              badge === "error" && "text-red-600 dark:text-red-400"
+            )}
+            title={
+              syncStatus === "stale"
+                ? "Canvas changed elsewhere"
+                : badge
+            }
+          >
+            {badge === "Saved" && <Check className="h-3 w-3" />}
+            {badge === "Saving…" && (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            )}
+            {badge === "Offline" && <CloudOff className="h-3 w-3" />}
+            {badge === "error" && <AlertCircle className="h-3 w-3" />}
+            {badge}
+          </span>
+        ) : null}
+        {syncStatus === "stale" && (
+          <span className="flex items-center gap-1 text-[10px]">
+            <button
+              type="button"
+              className="rounded px-1.5 py-0.5 underline-offset-2 hover:underline"
+              onClick={() => void reloadFromServer(projectId)}
+            >
+              Reload
+            </button>
+            <span className="text-muted-foreground">/</span>
+            <button
+              type="button"
+              className="rounded px-1.5 py-0.5 underline-offset-2 hover:underline"
+              onClick={() => void overwriteServer(projectId)}
+            >
+              Overwrite
+            </button>
+          </span>
+        )}
+        <button
+          type="button"
+          data-testid="publish-button"
+          disabled={publishDisabled}
+          title={
+            lintErrors.length > 0
+              ? "Fix lint errors before publishing"
+              : "Publish an immutable version"
+          }
+          onClick={() => void handlePublish()}
+          className="inline-flex items-center justify-center gap-1.5 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-white disabled:pointer-events-none disabled:opacity-50"
+        >
+          {publishing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Upload className="h-4 w-4" />
+          )}
+          Publish
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {versionCount}
+          </span>
+        </button>
+        {notice ? (
+          <span
+            data-testid="import-notice"
+            className="rounded-md bg-foreground/5 px-2 py-1 text-[11px] text-foreground"
+          >
+            {notice}
+          </span>
+        ) : null}
       </div>
     </>
   );

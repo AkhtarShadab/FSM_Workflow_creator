@@ -22,7 +22,7 @@ export async function saveDraft(
 
 export async function loadDraft(
   projectId: number
-): Promise<{ canvas: CanvasData; revision: number } | null> {
+): Promise<{ canvas: CanvasData; revision: number; updatedAtMs: number } | null> {
   return loadDraftRecord(db, projectId);
 }
 

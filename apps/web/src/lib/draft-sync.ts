@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
 import { canonicalJson, contentHash } from "@/lib/canonical-json";
+import { toUpdatedAtMs } from "@/lib/draft-autosave";
 import type { CanvasData } from "@/lib/fsm-types";
 import { fsmDefinitions, fsmDrafts, projects } from "@/db/schema";
 import type * as schema from "@/db/schema";
@@ -125,7 +126,7 @@ export async function saveDraft(
 export async function loadDraft(
   db: PersistenceDb,
   projectId: number
-): Promise<{ canvas: CanvasData; revision: number } | null> {
+): Promise<{ canvas: CanvasData; revision: number; updatedAtMs: number } | null> {
   const [row] = await db
     .select()
     .from(fsmDrafts)
@@ -135,6 +136,7 @@ export async function loadDraft(
   return {
     canvas: JSON.parse(row.canvasJson) as CanvasData,
     revision: row.revision,
+    updatedAtMs: toUpdatedAtMs(row.updatedAt),
   };
 }
 

@@ -122,6 +122,7 @@ describe("saveDraft / loadDraft", () => {
     const loaded = await loadDraft(db, projectId);
     expect(loaded?.revision).toBe(1);
     expect(loaded?.canvas.nodes[0]?.data.label).toBe("Alpha");
+    expect(loaded?.updatedAtMs).toBeGreaterThan(0);
 
     const second = canvas("Beta");
     const updated = await saveDraft(db, projectId, second, 1);
