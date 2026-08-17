@@ -28,7 +28,18 @@ async function openFreshCanvas(page: Page) {
   await expect(page.getByText("Add state")).toBeVisible({ timeout: 30_000 });
 }
 
-test("SCRIPT inspector: retainContext and deny_all persist after reload", async ({
+async function openScriptInspector(page: Page) {
+  await page
+    .locator(".react-flow__node")
+    .filter({ hasText: "SCRIPT" })
+    .first()
+    .click();
+  await expect(page.getByTestId("guardrails-card")).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+test("SCRIPT inspector: retryOn chip and retainContext persist after reload", async ({
   page,
 }) => {
   await openFreshCanvas(page);
@@ -42,27 +53,41 @@ test("SCRIPT inspector: retainContext and deny_all persist after reload", async 
   await expect(page.getByText("Execution Script")).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByTestId("tools-card")).toBeVisible();
+  await expect(page.getByTestId("guardrails-card")).toBeVisible();
+  await expect(page.getByTestId("retry-on-helper")).toContainText(
+    "retries ≠ self-loop"
+  );
   await expect(page.getByTestId("context-card")).toBeVisible();
+  await expect(page.getByTestId("tools-card")).toBeVisible();
+
+  const verifyFail = page.getByTestId("retry-on-verify_fail");
+  await verifyFail.scrollIntoViewIfNeeded();
+  await expect(verifyFail).toHaveAttribute("aria-pressed", "false");
+  await verifyFail.click();
+  await expect(verifyFail).toHaveAttribute("aria-pressed", "true");
+
+  const retain = page.getByTestId("retain-context");
+  await retain.scrollIntoViewIfNeeded();
+  await retain.click();
+  await expect(retain).toHaveAttribute("aria-checked", "true");
 
   await page.getByTestId("tool-access-mode").click();
   await page.getByRole("option", { name: /deny_all/ }).click();
-  await page.getByTestId("retain-context").click();
 
   await page.reload();
   await page.waitForURL(/\/canvas/, { timeout: 30_000 });
   await dismissDescribeOverlay(page);
   await expect(page.getByText("Add state")).toBeVisible({ timeout: 30_000 });
 
-  await page
-    .locator(".react-flow__node")
-    .filter({ hasText: "SCRIPT" })
-    .first()
-    .click();
+  await openScriptInspector(page);
 
-  await expect(page.getByTestId("tools-card")).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.getByTestId("retry-on-verify_fail")).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await expect(page.getByTestId("retain-context")).toHaveAttribute(
+    "aria-checked",
+    "true"
+  );
   await expect(page.getByTestId("tool-access-mode")).toContainText("deny_all");
-  await expect(page.getByTestId("retain-context")).toBeChecked();
 });

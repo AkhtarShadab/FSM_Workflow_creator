@@ -568,6 +568,7 @@ export function GuardrailsCard({ node, patch }: CardProps) {
                   key={value}
                   type="button"
                   data-testid={`retry-on-${value}`}
+                  aria-pressed={active}
                   onClick={() => toggleRetryOn(value, !active)}
                   className={cn(
                     "rounded-md border px-2 py-1 font-mono text-[10px] transition-colors",
@@ -581,9 +582,12 @@ export function GuardrailsCard({ node, patch }: CardProps) {
               );
             })}
           </div>
-          <p className="text-[10px] text-muted-foreground">
-            Guardrail retries are distinct from self-loop maxIterations — they
-            re-run the executor, not the graph edge.
+          <p
+            className="text-[10px] text-muted-foreground"
+            data-testid="retry-on-helper"
+          >
+            retries ≠ self-loop — guardrail retries re-run the executor; they
+            are distinct from self-loop maxIterations.
           </p>
         </div>
 

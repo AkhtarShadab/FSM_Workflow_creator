@@ -154,6 +154,29 @@ describe("014 lintCanvas", () => {
     ).toBe(true);
   });
 
+  it("warns DENY_ALL_ON_SCRIPT when SCRIPT uses deny_all", () => {
+    const canvas: CanvasData = {
+      nodes: [
+        node("S0", "START"),
+        node("SC1", "SCRIPT", {
+          toolAccess: { mode: "deny_all", allow: [] },
+        }),
+        node("END", "END"),
+      ],
+      edges: [
+        edge("e1", "S0", "SC1", "::STATE.SUCCESS"),
+        edge("e2", "SC1", "END", "::SCRIPT.NEXT"),
+        edge("e3", "SC1", "END", "::SCRIPT.ERROR"),
+      ],
+    };
+    const issues = lintCanvas(canvas);
+    expect(
+      issues.some(
+        (i) => i.code === "DENY_ALL_ON_SCRIPT" && i.nodeId === "SC1"
+      )
+    ).toBe(true);
+  });
+
   it("errors VERIFY_MISSING_CREDENTIAL for llm_verify without credential", () => {
     const canvas: CanvasData = {
       nodes: [

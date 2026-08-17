@@ -1000,6 +1000,18 @@ export function lintCanvas(
       );
     }
 
+    const toolAccess = normalizeToolAccess(n.data.toolAccess);
+    if (toolAccess.mode === "deny_all" && n.data.stateType === "SCRIPT") {
+      issues.push(
+        issue(
+          "warning",
+          "DENY_ALL_ON_SCRIPT",
+          `SCRIPT "${n.data.label}": deny_all blocks this state's own tool — the SCRIPT will have nothing to execute.`,
+          n.id
+        )
+      );
+    }
+
     const sc = n.data.successCondition;
     if (sc?.kind === "llm_verify" && !sc.credentialId?.trim()) {
       issues.push(
