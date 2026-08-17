@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Layers, Play, Square, SquareTerminal } from "lucide-react";
+import { getRunEvents, listRuns } from "@/app/project/[id]/runs/actions";
+import type { RunEventRow, RunHistoryRow } from "@/lib/run-history";
 import { AnimatedBeam } from "@/components/ui/animated-beam";
 import { AnimatedListItem } from "@/components/ui/animated-list";
 import { Badge } from "@/components/ui/badge";
@@ -14,41 +16,41 @@ import { cn } from "@/lib/utils";
 import { useCanvasStore } from "@/stores/canvas-store";
 import { useRunStore } from "@/stores/run-store";
 
-const MOCK_RUNS = [
-  {
-    id: "run_001",
-    status: "succeeded",
-    started: "2 hours ago",
-    tokens: "12,431",
-    duration: "1m 12s",
-  },
-  {
-    id: "run_002",
-    status: "failed",
-    started: "5 hours ago",
-    tokens: "4,102",
-    duration: "23s",
-  },
-  {
-    id: "run_003",
-    status: "succeeded",
-    started: "yesterday",
-    tokens: "31,904",
-    duration: "2m 48s",
-  },
-];
+const HISTORY_LIMIT = 50;
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     succeeded: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
     failed: "border-red-400/40 bg-red-400/10 text-red-300",
     running: "border-sky-400/40 bg-sky-400/10 text-sky-300",
+    pending: "border-foreground/20 bg-foreground/5 text-muted-foreground",
   };
   return (
-    <Badge variant="outline" className={cn("text-[10px]", styles[status])}>
+    <Badge variant="outline" className={cn("text-[10px]", styles[status] ?? styles.pending)}>
       {status}
     </Badge>
   );
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms == null) return "—";
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
+}
+
+function formatStarted(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString();
+}
+
+function formatTokens(run: RunHistoryRow): string {
+  const total = (run.tokensIn ?? 0) + (run.tokensOut ?? 0);
+  if (!total) return "—";
+  return `${total.toLocaleString()} tok`;
 }
 
 export function RunsView({
@@ -68,8 +70,54 @@ export function RunsView({
   const [busy, setBusy] = useState(false);
   const [lastStatus, setLastStatus] = useState<string | null>(null);
 
+  const [history, setHistory] = useState<RunHistoryRow[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [historyEvents, setHistoryEvents] = useState<RunEventRow[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+
   const totalIn = events.reduce((sum, e) => sum + (e.tokensIn ?? 0), 0);
   const totalOut = events.reduce((sum, e) => sum + (e.tokensOut ?? 0), 0);
+
+  const refreshHistory = useCallback(async () => {
+    setHistoryError(null);
+    try {
+      const rows = await listRuns(Number(projectId), HISTORY_LIMIT);
+      setHistory(rows);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "Failed to load runs");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    setHistoryLoading(true);
+    void refreshHistory();
+  }, [refreshHistory]);
+
+  const openRunEvents = async (runId: number) => {
+    if (selectedRunId === runId) {
+      setSelectedRunId(null);
+      setHistoryEvents([]);
+      setEventsError(null);
+      return;
+    }
+    setSelectedRunId(runId);
+    setEventsLoading(true);
+    setEventsError(null);
+    try {
+      const rows = await getRunEvents(runId);
+      setHistoryEvents(rows);
+    } catch (err) {
+      setHistoryEvents([]);
+      setEventsError(err instanceof Error ? err.message : "Failed to load events");
+    } finally {
+      setEventsLoading(false);
+    }
+  };
 
   const runEngine = async () => {
     reset();
@@ -104,6 +152,7 @@ export function RunsView({
     } finally {
       stop();
       setBusy(false);
+      void refreshHistory();
     }
   };
 
@@ -137,29 +186,108 @@ export function RunsView({
           <div className="border-b border-foreground/10 p-4">
             <h2 className="text-sm font-semibold text-foreground">Run history</h2>
             <p className="text-xs text-muted-foreground">
-              Recent local samples — live runs use @fsm/engine
+              Published versions from this project — click a run to inspect events
             </p>
           </div>
           <ScrollArea className="flex-1">
-            <ul className="divide-y divide-foreground/5">
-              {MOCK_RUNS.map((run) => (
-                <li key={run.id} className="flex items-center gap-4 p-4">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {run.id}
-                  </span>
-                  <StatusBadge status={run.status} />
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {run.started}
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {run.tokens} tok
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {run.duration}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            {historyError ? (
+              <p
+                className="p-4 text-xs text-red-400"
+                data-testid="run-history-error"
+              >
+                {historyError}
+              </p>
+            ) : null}
+            {historyLoading ? (
+              <p className="p-4 text-xs text-muted-foreground">Loading runs…</p>
+            ) : history.length === 0 ? (
+              <p
+                className="py-8 text-center text-xs text-muted-foreground/70"
+                data-testid="run-history-empty"
+              >
+                No runs yet. Publish a version and press “Run engine”.
+              </p>
+            ) : (
+              <ul className="divide-y divide-foreground/5" data-testid="run-history-list">
+                {history.map((run) => (
+                  <li key={run.id}>
+                    <button
+                      type="button"
+                      data-testid="run-history-row"
+                      data-run-id={run.id}
+                      data-status={run.status}
+                      data-version={run.version}
+                      onClick={() => void openRunEvents(run.id)}
+                      className={cn(
+                        "flex w-full items-center gap-4 p-4 text-left transition-colors hover:bg-foreground/5",
+                        selectedRunId === run.id && "bg-foreground/5"
+                      )}
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">
+                        run_{run.id}
+                      </span>
+                      <StatusBadge status={run.status} />
+                      <span
+                        data-testid="run-history-version"
+                        className="font-mono text-xs text-muted-foreground"
+                      >
+                        v{run.version}
+                      </span>
+                      <span
+                        data-testid="run-history-started"
+                        className="ml-auto text-xs text-muted-foreground"
+                      >
+                        {formatStarted(run.startedAt)}
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {formatTokens(run)}
+                      </span>
+                      <span
+                        data-testid="run-history-duration"
+                        className="font-mono text-xs text-muted-foreground"
+                      >
+                        {formatDuration(run.durationMs)}
+                      </span>
+                    </button>
+                    {selectedRunId === run.id ? (
+                      <div
+                        className="border-t border-foreground/5 bg-foreground/[0.03] px-4 py-3"
+                        data-testid="run-history-events"
+                      >
+                        {eventsLoading ? (
+                          <p className="text-xs text-muted-foreground">Loading events…</p>
+                        ) : eventsError ? (
+                          <p className="text-xs text-red-400">{eventsError}</p>
+                        ) : historyEvents.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No events recorded.</p>
+                        ) : (
+                          <ul className="flex flex-col gap-2">
+                            {historyEvents.map((ev) => (
+                              <li
+                                key={ev.id}
+                                data-testid="run-history-event"
+                                className="flex items-center gap-3 rounded-lg border border-foreground/5 bg-background/60 px-3 py-2"
+                              >
+                                <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  {ev.stateId}
+                                </span>
+                                <span className="text-[10px] tracking-wider text-muted-foreground uppercase">
+                                  {ev.kind}
+                                </span>
+                                <span className="flex-1 truncate font-mono text-xs text-foreground/80">
+                                  {ev.message}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
           </ScrollArea>
         </section>
 

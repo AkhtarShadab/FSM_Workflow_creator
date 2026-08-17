@@ -108,3 +108,79 @@ test("publish twice without edits shows one version; restore copies it into draf
   });
   await expect(publish).toContainText("2");
 });
+
+test("run a published version lists history with status and version", async ({
+  page,
+}) => {
+  await openCanvas(page);
+  await addPaletteState(page, /^Start$/);
+  await expect(page.getByTestId("sync-badge")).toHaveText("Saved", {
+    timeout: 15_000,
+  });
+  const publish = page.getByTestId("publish-button");
+  await publish.click();
+  await expect(publish).toContainText("1", { timeout: 15_000 });
+
+  const projectUrl = page.url().replace(/\/canvas\/?$/, "").replace(/\/$/, "");
+  await page.goto(`${projectUrl}/runs`);
+  await expect(page.getByText("Run history")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("run_001")).toHaveCount(0);
+  await expect(page.getByText("Recent local samples")).toHaveCount(0);
+
+  const result = await page.evaluate(async (pid) => {
+    const canvas = {
+      nodes: [
+        {
+          id: "S0",
+          type: "stateCircle",
+          position: { x: 0, y: 0 },
+          data: {
+            stateType: "START",
+            label: "Start",
+            onError: { signal: "::SCRIPT.ERROR" },
+          },
+        },
+        {
+          id: "E0",
+          type: "stateCircle",
+          position: { x: 200, y: 0 },
+          data: {
+            stateType: "END",
+            label: "End",
+            onError: { signal: "::SCRIPT.ERROR" },
+          },
+        },
+      ],
+      edges: [
+        {
+          id: "e0",
+          source: "S0",
+          target: "E0",
+          type: "script",
+          data: { signal: "::SCRIPT.NEXT" },
+        },
+      ],
+    };
+    const res = await fetch(`/api/projects/${pid}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ canvas }),
+    });
+    return res.json();
+  }, projectUrl.split("/").pop());
+
+  expect(result.status).toBe("succeeded");
+  expect(result.runId).toBeTruthy();
+
+  await page.reload();
+  const historyRow = page.getByTestId("run-history-row");
+  await expect(historyRow).toHaveCount(1, { timeout: 15_000 });
+  await expect(historyRow).toHaveAttribute("data-status", "succeeded");
+  await expect(historyRow.getByTestId("run-history-version")).toHaveText("v1");
+  await expect(page.getByText("run_001")).toHaveCount(0);
+
+  await historyRow.click();
+  await expect(page.getByTestId("run-history-event").first()).toBeVisible({
+    timeout: 10_000,
+  });
+});
