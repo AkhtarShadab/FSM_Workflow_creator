@@ -44,9 +44,20 @@ async function createDummyHarness(page: Page) {
 }
 
 async function selectStateNode(page: Page, type: string) {
-  // Palette adds jitter around the same origin, so notes often overlap.
-  // Force-click the test id rather than the topmost washi tape.
-  await page.getByTestId(`state-node-${type}`).first().click({ force: true });
+  // Click the React Flow node wrapper so onNodeClick updates the store.
+  // Inner sticky notes overlap from palette jitter and intercept pointer events.
+  await page
+    .locator(".react-flow__node")
+    .filter({ has: page.getByTestId(`state-node-${type}`) })
+    .first()
+    .click({ force: true });
+}
+
+async function openHttpInspector(page: Page) {
+  const urlField = page.getByLabel("URL template");
+  if (await urlField.isVisible()) return urlField;
+  await selectStateNode(page, "HTTP");
+  return urlField;
 }
 
 async function addPaletteState(page: Page, type: string) {
@@ -74,9 +85,10 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
 }) => {
   const { projectUrl, projectId } = await createDummyHarness(page);
 
+  // HTTP last so palette selectNode already opens the HTTP inspector.
   await addPaletteState(page, "START");
-  await addPaletteState(page, "HTTP");
   await addPaletteState(page, "END");
+  await addPaletteState(page, "HTTP");
 
   await expect(page.getByTestId("state-node-START").first()).toBeVisible({
     timeout: 15_000,
@@ -84,8 +96,7 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
   await expect(page.getByTestId("state-node-HTTP").first()).toBeVisible();
   await expect(page.getByTestId("state-node-END").first()).toBeVisible();
 
-  await selectStateNode(page, "HTTP");
-  const urlField = page.getByLabel("URL template");
+  const urlField = await openHttpInspector(page);
   await expect(urlField).toBeVisible({ timeout: 15_000 });
   await urlField.fill("https://example.com/health");
 
@@ -98,7 +109,7 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
   });
   await expect(page.getByTestId("state-node-HTTP").first()).toBeVisible();
   await expect(page.getByTestId("state-node-END").first()).toBeVisible();
-  await selectStateNode(page, "HTTP");
+  await openHttpInspector(page);
   await expect(page.getByLabel("URL template")).toHaveValue(
     "https://example.com/health"
   );
