@@ -53,7 +53,7 @@ describe("registry", () => {
 
   it("registers signals and skills", () => {
     let r = emptyRegistry();
-    r = registerSignal(r, "::MYAPP.DONE");
+    r = registerSignal(r, "::MYAPP.DONE", "project completion signal");
     r = registerSkill(r, "ship-feature");
     expect(isKnownSignal("::MYAPP.DONE", r)).toBe(true);
     expect(isKnownSkill("ship-feature", r)).toBe(true);
@@ -70,7 +70,11 @@ describe("registry", () => {
   });
 
   it("accepts registered custom signals", () => {
-    const registry = registerSignal(emptyRegistry(), "::MYAPP.DONE");
+    const registry = registerSignal(
+      emptyRegistry(),
+      "::MYAPP.DONE",
+      "project completion signal"
+    );
     const canvas: CanvasData = {
       nodes: [node("S0", "START"), node("END", "END")],
       edges: [edge("e1", "S0", "END", "::MYAPP.DONE")],

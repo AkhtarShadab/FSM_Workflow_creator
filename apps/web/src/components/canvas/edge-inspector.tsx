@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,12 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
-  SIGNAL_PRESETS,
   type EdgeKind,
   type TransitionEdge,
 } from "@/lib/fsm-types";
+import { groupedSignalPresets } from "@/lib/registry";
 import { useCanvasStore } from "@/stores/canvas-store";
+import { useRegistryStore } from "@/stores/registry-store";
 
 const KIND_STYLES: Record<EdgeKind, { badge: string; label: string }> = {
   script: {
@@ -46,9 +47,15 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const selectEdge = useCanvasStore((s) => s.selectEdge);
   const updateEdgeSignal = useCanvasStore((s) => s.updateEdgeSignal);
   const removeEdge = useCanvasStore((s) => s.removeEdge);
+  const registry = useRegistryStore((s) => s.registry);
 
   const edge = edges.find((e) => e.id === selectedEdgeId);
   const [custom, setCustom] = useState("");
+
+  const presetGroups = useMemo(
+    () => groupedSignalPresets(registry),
+    [registry]
+  );
 
   if (!edge) return null;
 
@@ -133,23 +140,36 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
                   />
                 </div>
               ) : null}
-              <div className="space-y-1.5">
-                {SIGNAL_PRESETS.map(({ signal, kind, hint }) => (
-                  <button
-                    key={signal}
-                    onClick={() => updateEdgeSignal(projectId, edge.id, signal)}
-                    className={cn(
-                      "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors",
-                      currentSignal === signal
-                        ? KIND_STYLES[kind].badge
-                        : "border-foreground/10 bg-foreground/5 hover:bg-foreground/10"
-                    )}
-                  >
-                    <span className="font-mono text-xs">{signal}</span>
-                    <span className="ml-2 text-[10px] text-muted-foreground">
-                      {hint}
-                    </span>
-                  </button>
+              <div className="space-y-3" data-testid="edge-signal-presets">
+                {presetGroups.map((group) => (
+                  <div key={group.namespace}>
+                    <p className="mb-1 text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                      {group.namespace}
+                    </p>
+                    <div className="space-y-1">
+                      {group.items.map(({ signal, kind, hint }) => (
+                        <button
+                          key={signal}
+                          type="button"
+                          onClick={() =>
+                            updateEdgeSignal(projectId, edge.id, signal)
+                          }
+                          className={cn(
+                            "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors",
+                            currentSignal === signal
+                              ? KIND_STYLES[kind].badge
+                              : "border-foreground/10 bg-foreground/5 hover:bg-foreground/10"
+                          )}
+                          data-testid={`edge-preset-${signal}`}
+                        >
+                          <span className="font-mono text-xs">{signal}</span>
+                          <span className="ml-2 text-[10px] text-muted-foreground">
+                            {hint}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>

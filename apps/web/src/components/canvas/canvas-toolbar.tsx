@@ -38,6 +38,10 @@ import {
   STATE_COLORS,
   type FSMStateType,
 } from "@/lib/fsm-types";
+import {
+  executorKindToStateType,
+  type CustomStateType,
+} from "@/lib/registry";
 import { useCanvasStore } from "@/stores/canvas-store";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useRegistryStore } from "@/stores/registry-store";
@@ -67,6 +71,7 @@ export function CanvasToolbar({
   projectName: string;
 }) {
   const addNode = useCanvasStore((s) => s.addNode);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const selectNode = useCanvasStore((s) => s.selectNode);
   const preferredSignal = useCanvasStore((s) => s.preferredSignal);
   const setPreferredSignal = useCanvasStore((s) => s.setPreferredSignal);
@@ -140,6 +145,36 @@ export function CanvasToolbar({
     selectNode(id);
   };
 
+  const handleAddCustom = (custom: CustomStateType) => {
+    const stateType = executorKindToStateType(custom.executorKind);
+    const center = screenToFlowPosition({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    });
+    const jitter = () => (Math.random() - 0.5) * 160;
+    const id = addNode(
+      projectId,
+      stateType,
+      { x: center.x + jitter(), y: center.y + jitter() },
+      custom.label
+    );
+    updateNodeData(projectId, id, {
+      customTypeId: custom.id,
+      successCondition: custom.successCondition ?? { kind: "signal" },
+    });
+    selectNode(id);
+  };
+
+  const customByGroup = useMemo(() => {
+    const map = new Map<string, CustomStateType[]>();
+    for (const cs of registry.customStates) {
+      const list = map.get(cs.group) ?? [];
+      list.push(cs);
+      map.set(cs.group, list);
+    }
+    return map;
+  }, [registry.customStates]);
+
   return (
     <>
       <div className="absolute top-4 left-4 z-10 hidden w-[200px] rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm md:block">
@@ -185,6 +220,32 @@ export function CanvasToolbar({
                     </button>
                   );
                 })}
+                {(customByGroup.get(group.id) ?? []).map((custom) => (
+                  <button
+                    key={custom.id}
+                    type="button"
+                    title={custom.description}
+                    data-testid={`palette-custom-${custom.id}`}
+                    onClick={() => handleAddCustom(custom)}
+                    className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-foreground/5"
+                  >
+                    <span
+                      className={cn(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border-2 border-dashed border-foreground/20 bg-foreground/5 text-foreground/70 transition-transform group-hover:scale-110"
+                      )}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-foreground">
+                        {custom.label}
+                      </span>
+                      <span className="block truncate text-[9px] text-muted-foreground">
+                        {custom.description}
+                      </span>
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           ))}
@@ -211,6 +272,17 @@ export function CanvasToolbar({
             </button>
           );
         })}
+        {registry.customStates.map((custom) => (
+          <button
+            key={custom.id}
+            title={custom.label}
+            type="button"
+            onClick={() => handleAddCustom(custom)}
+            className="flex h-9 w-9 items-center justify-center rounded-md border-2 border-dashed border-foreground/20 bg-foreground/5"
+          >
+            <ShieldCheck className="h-4 w-4" />
+          </button>
+        ))}
       </div>
 
       <div className="absolute top-4 left-1/2 z-10 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm">

@@ -25,6 +25,7 @@ import type {
   AggregationStrategy,
   SpawnConfig,
   StateNode,
+  SuccessCondition,
   ToolLanguage,
   TransitionEdge,
 } from "@/lib/fsm-types";
@@ -540,6 +541,158 @@ export function GuardrailsCard({ node, patch }: CardProps) {
                 ? "Script body is empty — the tool would exit without a signal."
                 : "System prompt is empty — the AI state has no instructions."}
           </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Success condition authoring (FeatureShipping 013 F2; evaluation in 014) */
+export function SuccessCard({ node, patch }: CardProps) {
+  const credentials = useCredentialStore((s) => s.credentials);
+  const sc: SuccessCondition = node.data.successCondition ?? { kind: "signal" };
+
+  const patchSc = (next: SuccessCondition) => patch({ successCondition: next });
+
+  return (
+    <div
+      className="rounded-xl border border-foreground/10 bg-background/80 p-4"
+      data-testid="success-condition-card"
+    >
+      <h3 className="mb-1 text-sm font-semibold text-foreground">Success</h3>
+      <p className="mb-3 text-[10px] text-muted-foreground">
+        When is this state considered done? Runtime evaluation is deferred to
+        run contract (014).
+      </p>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Kind</Label>
+          <Select
+            value={sc.kind}
+            onValueChange={(v) => {
+              if (v === "signal") patchSc({ kind: "signal" });
+              else if (v === "schema")
+                patchSc({
+                  kind: "schema",
+                  schema: sc.kind === "schema" ? sc.schema : '{"type":"object"}',
+                });
+              else if (v === "predicate")
+                patchSc({
+                  kind: "predicate",
+                  expr: sc.kind === "predicate" ? sc.expr : "",
+                });
+              else if (v === "llm_verify")
+                patchSc({
+                  kind: "llm_verify",
+                  credentialId: "",
+                  modelId: "",
+                  rubric: "",
+                  onFail: "error_signal",
+                });
+            }}
+          >
+            <SelectTrigger
+              className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+              data-testid="success-kind-select"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-foreground/10 bg-popover text-foreground">
+              <SelectItem value="signal">signal (executor emission)</SelectItem>
+              <SelectItem value="schema">schema (Ajv on output)</SelectItem>
+              <SelectItem value="predicate">predicate (JSONLogic)</SelectItem>
+              <SelectItem value="llm_verify">llm_verify (judge model)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {sc.kind === "schema" && (
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">JSON Schema</Label>
+            <Textarea
+              value={sc.schema}
+              onChange={(e) => patchSc({ kind: "schema", schema: e.target.value })}
+              className="min-h-[72px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+              data-testid="success-schema"
+            />
+          </div>
+        )}
+
+        {sc.kind === "predicate" && (
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">JSONLogic expr</Label>
+            <Textarea
+              value={sc.expr}
+              onChange={(e) =>
+                patchSc({ kind: "predicate", expr: e.target.value })
+              }
+              placeholder='{ "==": [1, 1] }'
+              className="min-h-[72px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+              data-testid="success-predicate"
+            />
+          </div>
+        )}
+
+        {sc.kind === "llm_verify" && (
+          <>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Credential</Label>
+              <Select
+                value={sc.credentialId || undefined}
+                onValueChange={(v) => {
+                  if (typeof v === "string") {
+                    patchSc({ ...sc, credentialId: v });
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
+                  <SelectValue placeholder="Select credential…" />
+                </SelectTrigger>
+                <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                  {credentials.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.label || c.provider}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Judge model</Label>
+              <Input
+                value={sc.modelId}
+                onChange={(e) => patchSc({ ...sc, modelId: e.target.value })}
+                className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Rubric</Label>
+              <Textarea
+                value={sc.rubric}
+                onChange={(e) => patchSc({ ...sc, rubric: e.target.value })}
+                className="min-h-[60px] border-foreground/10 bg-foreground/5 text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">On fail</Label>
+              <Select
+                value={sc.onFail}
+                onValueChange={(v) => {
+                  if (v === "retry" || v === "error_signal") {
+                    patchSc({ ...sc, onFail: v });
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                  <SelectItem value="retry">retry</SelectItem>
+                  <SelectItem value="error_signal">error_signal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </>
         )}
       </div>
     </div>
