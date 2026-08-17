@@ -3,5 +3,7 @@ export async function register() {
   const { assertPlatformSecret } = await import("@/lib/crypto/envelope");
   assertPlatformSecret();
   const { reconcileOrphanedRuns } = await import("@/lib/run-supervisor");
+  // Only `running` rows become `interrupted`. `awaiting_human` stays parked
+  // so a later POST /human/[taskId] can wake the waiter.
   await reconcileOrphanedRuns();
 }

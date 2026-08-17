@@ -54,6 +54,15 @@ export function canvasToEngine(canvas: CanvasData): {
         base.inputSchema = { type: "object" };
       }
     }
+    if (n.data.stateType === "HUMAN") {
+      const humanMs = n.data.human?.timeoutMs ?? 3_600_000;
+      const g = n.data.guardrails;
+      base.guardrails = {
+        timeoutMs: Math.max(g?.timeoutMs ?? 0, humanMs + 5_000),
+        retryMax: 0,
+        retryBackoffMs: g?.retryBackoffMs ?? 0,
+      };
+    }
     return base;
   });
 

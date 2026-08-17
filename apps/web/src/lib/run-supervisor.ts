@@ -2,6 +2,11 @@ import { db } from "@/db";
 import { fsmDefinitions, runEvents, runs } from "@/db/schema";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
 import type { CanvasData, StateNodeData } from "@/lib/fsm-types";
+import {
+  defaultHumanBridge,
+  type HumanBridge,
+  type HumanResolution,
+} from "@/lib/executors/human-bridge";
 import { getExecutor } from "@/lib/executors/registry";
 import type {
   Executor,
@@ -172,7 +177,9 @@ export const drizzleRunStore: RunStore = {
       .update(runs)
       .set({
         status: patch.status,
-        endedAt: patch.endedAt ?? (patch.status === "running" ? null : new Date()),
+        endedAt:
+          patch.endedAt ??
+          (isOpenRunStatus(patch.status) ? null : new Date()),
       })
       .where(eq(runs.id, runId));
   },
@@ -199,10 +206,15 @@ export interface ActiveRun {
   done: Promise<void>;
 }
 
+function isOpenRunStatus(status: RunStatus): boolean {
+  return status === "running" || status === "awaiting_human" || status === "pending";
+}
+
 export interface SupervisorDeps {
   store?: RunStore;
   bus?: EventBus;
   getExecutor?: (type: string) => Executor;
+  humanBridge?: HumanBridge;
 }
 
 export interface ExecuteRunOptions {
@@ -219,6 +231,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
   const store = deps.store ?? drizzleRunStore;
   const bus = deps.bus ?? defaultBus;
   const resolveExecutor = deps.getExecutor ?? getExecutor;
+  const humanBridge = deps.humanBridge ?? defaultHumanBridge;
   const registry = new Map<number, ActiveRun>();
 
   function ensureController(runId: number): AbortController {
@@ -477,6 +490,18 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     return true;
   }
 
+  async function resumeHuman(
+    runId: number,
+    taskId: number,
+    resolution: HumanResolution
+  ): Promise<boolean> {
+    const woke = humanBridge.resolve(runId, taskId, resolution);
+    if (woke) {
+      await store.updateRun(runId, { status: "running" });
+    }
+    return woke;
+  }
+
   function subscribe(
     runId: number,
     handler: (ev: PersistedRunEvent) => void
@@ -497,11 +522,13 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     beginRun,
     executeRun,
     cancel,
+    resumeHuman,
     subscribe,
     listEventsAfter,
     getActive,
     store,
     bus,
+    humanBridge,
     emit,
   };
 }

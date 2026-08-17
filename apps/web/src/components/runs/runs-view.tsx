@@ -10,6 +10,7 @@ import { NumberTicker } from "@/components/ui/number-ticker";
 import { PulsatingButton } from "@/components/ui/pulsating-button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProjectNav } from "@/components/nav/project-nav";
+import { HumanTaskCard } from "@/components/runs/human-task-card";
 import { cn } from "@/lib/utils";
 import { useCanvasStore } from "@/stores/canvas-store";
 import { useRunStore } from "@/stores/run-store";
@@ -86,6 +87,10 @@ function formatLiveEvent(ev: SseFrame, kind: string): string {
       return `error ${String(p.code ?? p.message ?? p.error ?? "")}`.trim();
     case "state.transition":
       return `→ ${String(p.signal ?? "")}`;
+    case "human.awaiting":
+      return `awaiting human task ${String(p.taskId ?? "")}`.trim();
+    case "human.resolved":
+      return `human ${String(p.decision ?? p.signal ?? "resolved")}`.trim();
     case "run.complete":
       return "run complete";
     case "run.failed":
@@ -96,6 +101,7 @@ function formatLiveEvent(ev: SseFrame, kind: string): string {
 }
 
 function statusFromFrame(kind: string, payload: unknown): string | null {
+  if (kind === "human.awaiting") return "awaiting_human";
   if (kind === "run.complete") return "succeeded";
   if (kind === "run.failed") {
     const code = asRecord(payload).code;
@@ -110,6 +116,7 @@ function StatusBadge({ status }: { status: string }) {
     failed: "border-red-400/40 bg-red-400/10 text-red-300",
     running: "border-sky-400/40 bg-sky-400/10 text-sky-300",
     cancelled: "border-amber-400/40 bg-amber-400/10 text-amber-300",
+    awaiting_human: "border-amber-400/40 bg-amber-400/10 text-amber-200",
   };
   return (
     <Badge variant="outline" className={cn("text-[10px]", styles[status])}>
@@ -135,6 +142,10 @@ export function RunsView({
   const canvas = useCanvasStore((s) => s.canvases[projectId]);
   const [busy, setBusy] = useState(false);
   const [lastStatus, setLastStatus] = useState<string | null>(null);
+  const [pendingHuman, setPendingHuman] = useState<{
+    taskId: number;
+    prompt: string;
+  } | null>(null);
 
   const totalIn = events.reduce((sum, e) => sum + (e.tokensIn ?? 0), 0);
   const totalOut = events.reduce((sum, e) => sum + (e.tokensOut ?? 0), 0);
@@ -158,12 +169,26 @@ export function RunsView({
         }
         const eventKind = parsed.kind ?? kind;
         if (eventKind === "state.token") return;
+        if (eventKind === "human.awaiting") {
+          const p = asRecord(parsed.payload);
+          const taskId = Number(p.taskId);
+          if (Number.isInteger(taskId) && taskId > 0) {
+            setPendingHuman({
+              taskId,
+              prompt: typeof p.prompt === "string" ? p.prompt : "",
+            });
+          }
+        }
+        if (eventKind === "human.resolved") {
+          setPendingHuman(null);
+        }
         const status = statusFromFrame(eventKind, parsed.payload);
         if (status) {
           setLastStatus(status);
-          stop();
-          setBusy(false);
           if (eventKind === "run.complete" || eventKind === "run.failed") {
+            stop();
+            setBusy(false);
+            setPendingHuman(null);
             es.close();
             if (sourceRef.current === es) sourceRef.current = null;
           }
@@ -195,6 +220,7 @@ export function RunsView({
   const runEngine = async () => {
     reset();
     closeStream();
+    setPendingHuman(null);
     setBusy(true);
     setLastStatus("running");
     start();
@@ -394,6 +420,15 @@ export function RunsView({
 
           <ScrollArea className="flex-1 p-4">
             <div className="flex flex-col gap-2" data-testid="run-events">
+              {lastStatus === "awaiting_human" &&
+                pendingHuman &&
+                runId != null && (
+                  <HumanTaskCard
+                    runId={runId}
+                    taskId={pendingHuman.taskId}
+                    prompt={pendingHuman.prompt}
+                  />
+                )}
               {events.length === 0 && (
                 <p className="py-8 text-center text-xs text-muted-foreground/70">
                   No events yet. Press “Run engine” to execute the canvas FSM.

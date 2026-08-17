@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { mockAdapter } from "@fsm/byok-gateway";
 import type { StateNodeData } from "@/lib/fsm-types";
 import { createAiExecutor } from "@/lib/executors/ai";
+import { createHumanBridge } from "@/lib/executors/human-bridge";
+import { createHumanExecutor } from "@/lib/executors/human";
 import { getExecutor } from "@/lib/executors/registry";
 import {
   createMemoryRunStore,
@@ -108,10 +110,12 @@ describe("run supervisor", () => {
     const store = createMemoryRunStore();
     store.statuses.set(3, "running");
     store.statuses.set(4, "succeeded");
+    store.statuses.set(5, "awaiting_human");
     const n = await reconcileOrphanedRuns(store);
     expect(n).toBe(1);
     expect(store.statuses.get(3)).toBe("interrupted");
     expect(store.statuses.get(4)).toBe("succeeded");
+    expect(store.statuses.get(5)).toBe("awaiting_human");
   });
 
   it("never persists an apiKey in event payloads", async () => {
@@ -167,5 +171,154 @@ describe("run supervisor", () => {
         expect(blob).not.toMatch(/"apiKey"/);
       }
     }
+  });
+
+  it("human task resolution resumes the run with the approval signal", async () => {
+    const store = createMemoryRunStore();
+    const bridge = createHumanBridge();
+    const executeHuman = createHumanExecutor({
+      createTask: async () => ({ id: 42 }),
+      setRunAwaiting: async (runId) => {
+        await store.updateRun(runId, { status: "awaiting_human" });
+      },
+      wait: (args) => bridge.wait(args),
+    });
+    const supervisor = createRunSupervisor({
+      store,
+      humanBridge: bridge,
+      getExecutor: (type) =>
+        type === "HUMAN" ? executeHuman : getExecutor(type),
+    });
+
+    const { done } = supervisor.beginRun(21, {
+      states: [
+        {
+          id: "S0",
+          type: "START",
+          guardrails: { timeoutMs: 5_000, retryMax: 0, retryBackoffMs: 0 },
+        },
+        {
+          id: "H1",
+          type: "HUMAN",
+          guardrails: { timeoutMs: 5_000, retryMax: 0, retryBackoffMs: 0 },
+        },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "S0", on: "::SCRIPT.NEXT", to: "H1" },
+        { from: "H1", on: "::HUMAN.APPROVE", to: "END" },
+      ],
+      nodesById: new Map([
+        [
+          "H1",
+          {
+            id: "H1",
+            data: {
+              human: {
+                prompt: "Approve deploy?",
+                approvalSignals: ["::HUMAN.APPROVE"],
+              },
+            } as StateNodeData,
+          },
+        ],
+      ]),
+    });
+
+    const startWait = Date.now();
+    while (store.statuses.get(21) !== "awaiting_human") {
+      if (Date.now() - startWait > 2_000) {
+        throw new Error("did not reach awaiting_human");
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const awaiting = store.events.find((e) => e.kind === "human.awaiting");
+    const taskId = Number(
+      (awaiting?.payload as { taskId?: number } | null)?.taskId
+    );
+    expect(taskId).toBe(42);
+
+    const woke = await supervisor.resumeHuman(21, taskId, {
+      signal: "::HUMAN.APPROVE",
+      decision: "approved",
+    });
+    expect(woke).toBe(true);
+    await done;
+
+    expect(store.statuses.get(21)).toBe("succeeded");
+    const output = store.events.find(
+      (e) => e.kind === "state.output" && e.stateId === "H1"
+    );
+    expect(output?.payload).toMatchObject({ signal: "::HUMAN.APPROVE" });
+    expect(store.events.some((e) => e.kind === "human.resolved")).toBe(true);
+    expect(store.events.some((e) => e.kind === "run.complete")).toBe(true);
+  });
+
+  it("human task expiry emits ::HUMAN.REJECT", async () => {
+    const store = createMemoryRunStore();
+    const bridge = createHumanBridge();
+    let expired = false;
+    const executeHuman = createHumanExecutor({
+      createTask: async () => ({ id: 7 }),
+      setRunAwaiting: async (runId) => {
+        await store.updateRun(runId, { status: "awaiting_human" });
+      },
+      wait: (args) => bridge.wait(args),
+      expireTask: async () => {
+        expired = true;
+      },
+    });
+    const supervisor = createRunSupervisor({
+      store,
+      humanBridge: bridge,
+      getExecutor: (type) =>
+        type === "HUMAN" ? executeHuman : getExecutor(type),
+    });
+
+    await supervisor.executeRun(22, {
+      states: [
+        {
+          id: "S0",
+          type: "START",
+          guardrails: { timeoutMs: 5_000, retryMax: 0, retryBackoffMs: 0 },
+        },
+        {
+          id: "H1",
+          type: "HUMAN",
+          guardrails: { timeoutMs: 5_000, retryMax: 0, retryBackoffMs: 0 },
+        },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "S0", on: "::SCRIPT.NEXT", to: "H1" },
+        { from: "H1", on: "::HUMAN.REJECT", to: "END" },
+      ],
+      nodesById: new Map([
+        [
+          "H1",
+          {
+            id: "H1",
+            data: {
+              human: {
+                prompt: "Approve quickly",
+                approvalSignals: ["::HUMAN.APPROVE", "::HUMAN.REJECT"],
+                timeoutMs: 25,
+              },
+            } as StateNodeData,
+          },
+        ],
+      ]),
+    });
+
+    expect(expired).toBe(true);
+    const output = store.events.find(
+      (e) => e.kind === "state.output" && e.stateId === "H1"
+    );
+    expect(output?.payload).toMatchObject({ signal: "::HUMAN.REJECT" });
+    const resolved = store.events.find((e) => e.kind === "human.resolved");
+    expect(resolved?.payload).toMatchObject({
+      decision: "expired",
+      signal: "::HUMAN.REJECT",
+    });
+    expect(store.statuses.get(22)).toBe("succeeded");
   });
 });
