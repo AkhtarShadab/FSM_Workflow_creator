@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Layers, Play, Square, SquareTerminal } from "lucide-react";
 import { AnimatedBeam } from "@/components/ui/animated-beam";
 import { AnimatedListItem } from "@/components/ui/animated-list";
@@ -13,6 +13,19 @@ import { ProjectNav } from "@/components/nav/project-nav";
 import { cn } from "@/lib/utils";
 import { useCanvasStore } from "@/stores/canvas-store";
 import { useRunStore } from "@/stores/run-store";
+
+const SSE_KINDS = [
+  "state.start",
+  "state.token",
+  "state.output",
+  "state.retry",
+  "state.error",
+  "state.transition",
+  "human.awaiting",
+  "human.resolved",
+  "run.complete",
+  "run.failed",
+] as const;
 
 const MOCK_RUNS = [
   {
@@ -38,11 +51,65 @@ const MOCK_RUNS = [
   },
 ];
 
+type SseFrame = {
+  id?: number;
+  stateId?: string;
+  kind?: string;
+  payload?: unknown;
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  latencyMs?: number | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function formatLiveEvent(ev: SseFrame, kind: string): string {
+  const p = asRecord(ev.payload);
+  switch (kind) {
+    case "state.start":
+      return `start ${String(p.type ?? ev.stateId ?? "")}`.trim();
+    case "state.output": {
+      const bits = [`output ${String(p.signal ?? "")}`.trim()];
+      if (ev.latencyMs != null) bits.push(`${ev.latencyMs}ms`);
+      if (ev.tokensIn != null || ev.tokensOut != null) {
+        bits.push(`tok ${ev.tokensIn ?? 0}/${ev.tokensOut ?? 0}`);
+      }
+      return bits.join(" · ");
+    }
+    case "state.retry":
+      return `retry attempt=${String(p.attempt ?? "")} ${String(p.code ?? "")}`.trim();
+    case "state.error":
+      return `error ${String(p.code ?? p.message ?? p.error ?? "")}`.trim();
+    case "state.transition":
+      return `→ ${String(p.signal ?? "")}`;
+    case "run.complete":
+      return "run complete";
+    case "run.failed":
+      return `run failed ${String(p.code ?? p.error ?? "")}`.trim();
+    default:
+      return kind;
+  }
+}
+
+function statusFromFrame(kind: string, payload: unknown): string | null {
+  if (kind === "run.complete") return "succeeded";
+  if (kind === "run.failed") {
+    const code = asRecord(payload).code;
+    return code === "CANCELLED" ? "cancelled" : "failed";
+  }
+  return null;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     succeeded: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
     failed: "border-red-400/40 bg-red-400/10 text-red-300",
     running: "border-sky-400/40 bg-sky-400/10 text-sky-300",
+    cancelled: "border-amber-400/40 bg-amber-400/10 text-amber-300",
   };
   return (
     <Badge variant="outline" className={cn("text-[10px]", styles[status])}>
@@ -62,8 +129,9 @@ export function RunsView({
   const s0Ref = useRef<HTMLDivElement>(null);
   const s1Ref = useRef<HTMLDivElement>(null);
   const s2Ref = useRef<HTMLDivElement>(null);
+  const sourceRef = useRef<EventSource | null>(null);
 
-  const { live, events, start, stop, pushEvent, reset } = useRunStore();
+  const { live, runId, events, start, stop, pushEvent, reset } = useRunStore();
   const canvas = useCanvasStore((s) => s.canvases[projectId]);
   const [busy, setBusy] = useState(false);
   const [lastStatus, setLastStatus] = useState<string | null>(null);
@@ -71,10 +139,64 @@ export function RunsView({
   const totalIn = events.reduce((sum, e) => sum + (e.tokensIn ?? 0), 0);
   const totalOut = events.reduce((sum, e) => sum + (e.tokensOut ?? 0), 0);
 
+  const closeStream = useCallback(() => {
+    sourceRef.current?.close();
+    sourceRef.current = null;
+  }, []);
+
+  const attachStream = useCallback(
+    (id: number) => {
+      closeStream();
+      const es = new EventSource(`/api/runs/${id}/stream`);
+      sourceRef.current = es;
+      const onFrame = (kind: string, raw: MessageEvent<string>) => {
+        let parsed: SseFrame = {};
+        try {
+          parsed = JSON.parse(raw.data) as SseFrame;
+        } catch {
+          parsed = {};
+        }
+        const eventKind = parsed.kind ?? kind;
+        if (eventKind === "state.token") return;
+        const status = statusFromFrame(eventKind, parsed.payload);
+        if (status) {
+          setLastStatus(status);
+          stop();
+          setBusy(false);
+          if (eventKind === "run.complete" || eventKind === "run.failed") {
+            es.close();
+            if (sourceRef.current === es) sourceRef.current = null;
+          }
+        }
+        pushEvent({
+          id: parsed.id != null ? `sse_${parsed.id}` : undefined,
+          stateId: parsed.stateId ?? "",
+          kind: eventKind,
+          message: formatLiveEvent(parsed, eventKind),
+          tokensIn: parsed.tokensIn ?? undefined,
+          tokensOut: parsed.tokensOut ?? undefined,
+          latencyMs: parsed.latencyMs ?? undefined,
+        });
+      };
+      for (const kind of SSE_KINDS) {
+        es.addEventListener(kind, (ev) =>
+          onFrame(kind, ev as MessageEvent<string>)
+        );
+      }
+      es.onerror = () => {
+        /* EventSource reconnects; terminal events close the socket */
+      };
+    },
+    [closeStream, pushEvent, stop]
+  );
+
+  useEffect(() => () => closeStream(), [closeStream]);
+
   const runEngine = async () => {
     reset();
+    closeStream();
     setBusy(true);
-    setLastStatus(null);
+    setLastStatus("running");
     start();
     try {
       const nodes = canvas?.nodes ?? [];
@@ -84,24 +206,34 @@ export function RunsView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ canvas: { nodes, edges } }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Run failed");
-      setLastStatus(data.status);
-      for (const ev of data.events ?? []) {
-        pushEvent({
-          stateId: ev.stateId,
-          kind: (ev.kind as "SCRIPT" | "AI" | "SYSTEM" | "SPAWN") || "SCRIPT",
-          message: ev.message,
-        });
+      const data = (await res.json()) as { runId?: number; error?: string };
+      if (!res.ok || data.runId == null) {
+        throw new Error(data.error ?? "Run failed");
       }
+      start(data.runId);
+      attachStream(data.runId);
     } catch (err) {
       setLastStatus("failed");
       pushEvent({
         stateId: "engine",
-        kind: "SYSTEM",
+        kind: "run.failed",
         message: err instanceof Error ? err.message : "Run failed",
       });
-    } finally {
+      stop();
+      setBusy(false);
+    }
+  };
+
+  const cancelRun = async () => {
+    const id = useRunStore.getState().runId;
+    if (id == null) {
+      stop();
+      setBusy(false);
+      return;
+    }
+    try {
+      await fetch(`/api/runs/${id}/cancel`, { method: "POST" });
+    } catch {
       stop();
       setBusy(false);
     }
@@ -170,19 +302,20 @@ export function RunsView({
                 Live monitor
               </h2>
               <p className="text-xs text-muted-foreground">
-                Engine run from canvas (stub executors for AI/HTTP)
+                SSE /api/runs/[id]/stream
+                {runId != null ? ` · run ${runId}` : ""}
                 {lastStatus ? ` · last: ${lastStatus}` : ""}
               </p>
             </div>
             {busy || live ? (
               <Button
                 size="sm"
-                disabled={busy}
-                onClick={stop}
+                data-testid="run-cancel"
+                onClick={cancelRun}
                 className="gap-2 bg-red-500/20 text-red-200 hover:bg-red-500/30"
               >
                 <Square className="h-3.5 w-3.5" />
-                Stop
+                Cancel
               </Button>
             ) : (
               <PulsatingButton
@@ -273,9 +406,17 @@ export function RunsView({
                     <span className="font-mono text-[10px] text-muted-foreground">
                       {e.stateId}
                     </span>
+                    <span className="font-mono text-[10px] text-sky-300/80">
+                      {e.kind}
+                    </span>
                     <span className="flex-1 truncate font-mono text-xs text-foreground/80">
                       {e.message}
                     </span>
+                    {e.latencyMs != null && (
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {e.latencyMs}ms
+                      </span>
+                    )}
                   </div>
                 </AnimatedListItem>
               ))}

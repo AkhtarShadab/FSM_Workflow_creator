@@ -5,7 +5,7 @@ import { create } from "zustand";
 export interface RunEvent {
   id: string;
   stateId: string;
-  kind: "SCRIPT" | "AI" | "SYSTEM" | "SPAWN";
+  kind: string;
   message: string;
   tokensIn?: number;
   tokensOut?: number;
@@ -15,10 +15,11 @@ export interface RunEvent {
 
 interface RunStore {
   live: boolean;
+  runId: number | null;
   events: RunEvent[];
-  start: () => void;
+  start: (runId?: number | null) => void;
   stop: () => void;
-  pushEvent: (event: Omit<RunEvent, "id" | "ts">) => void;
+  pushEvent: (event: Omit<RunEvent, "id" | "ts"> & { id?: string }) => void;
   reset: () => void;
 }
 
@@ -26,18 +27,23 @@ let n = 0;
 
 export const useRunStore = create<RunStore>()((set) => ({
   live: false,
+  runId: null,
   events: [],
 
-  start: () => set({ live: true }),
+  start: (runId = null) => set({ live: true, runId: runId ?? null }),
   stop: () => set({ live: false }),
 
   pushEvent: (event) =>
     set((state) => ({
       events: [
-        { ...event, id: `ev_${++n}`, ts: Date.now() },
+        {
+          ...event,
+          id: event.id ?? `ev_${++n}`,
+          ts: Date.now(),
+        },
         ...state.events,
-      ].slice(0, 50),
+      ].slice(0, 200),
     })),
 
-  reset: () => set({ events: [], live: false }),
+  reset: () => set({ events: [], live: false, runId: null }),
 }));

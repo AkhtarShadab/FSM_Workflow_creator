@@ -1,10 +1,12 @@
 import type { FSMStateType } from "@/lib/fsm-types";
 import { executeAi } from "./ai";
+import { executeHttp } from "./http";
+import { executeValidate } from "./validate";
 import type { Executor } from "./types";
 
 /**
  * SCRIPT: success stub in mock mode; otherwise TOOL_RUNTIME_UNAVAILABLE until 010 G3.
- * HTTP / VALIDATE: success stubs until E2. HUMAN auto-approves until E3.
+ * HUMAN auto-approves until E3.
  */
 export const executeStart: Executor = async () => "::SCRIPT.NEXT";
 
@@ -16,9 +18,7 @@ export const executeScript: Executor = async () => {
   };
 };
 
-export const executeHttp: Executor = async () => "::HTTP.NEXT";
-
-export const executeValidate: Executor = async () => "::VALIDATE.NEXT";
+export { executeHttp, executeValidate };
 
 export const executeHuman: Executor = async () => "::HUMAN.APPROVE";
 
