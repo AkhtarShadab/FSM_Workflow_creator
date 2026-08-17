@@ -20,6 +20,7 @@ import {
   ScriptEditorCard,
   SpawnCard,
   SystemFunctionCard,
+  SuccessCard,
   ValidateCard,
   ExternalAICard,
   VerifiabilityCard,
@@ -153,6 +154,8 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
                     <GuardrailsCard node={node} patch={patch} />
                   </>
                 )}
+
+                <SuccessCard node={node} patch={patch} />
 
                 <ConditionsCard
                   node={node}

@@ -1,7 +1,10 @@
-/** Project extension registry (FeatureShipping 001 C6 + 013 F1) */
+/** Project extension registry (FeatureShipping 001 C6 + 013 F1/F2) */
 
 import {
   STATE_SIGNAL_KITS,
+  SIGNAL_PRESETS,
+  type CanvasData,
+  type EdgeKind,
   type FSMStateType,
   type PaletteGroupId,
   type SuccessCondition,
@@ -108,6 +111,8 @@ export function isValidSignalNamespace(signal: string): boolean {
   return SIGNAL_RE.test(signal);
 }
 
+const MIN_SIGNAL_DESCRIPTION = 8;
+
 export function registerSignal(
   registry: ProjectRegistry,
   signal: string,
@@ -123,12 +128,18 @@ export function registerSignal(
   if (BUILTIN_SIGNALS.has(signal)) {
     throw new Error(`SIGNAL_BUILTIN: ${signal} is a built-in signal`);
   }
+  const desc = description?.trim() ?? "";
+  if (desc.length < MIN_SIGNAL_DESCRIPTION) {
+    throw new Error(
+      `Description is required (min ${MIN_SIGNAL_DESCRIPTION} chars)`
+    );
+  }
   if (registry.customSignals.some((s) => s.signal === signal)) {
     return registry;
   }
   return {
     ...registry,
-    customSignals: [...registry.customSignals, { signal, description }],
+    customSignals: [...registry.customSignals, { signal, description: desc }],
   };
 }
 
@@ -161,14 +172,110 @@ export function registerCustomState(
   };
 }
 
+/** True when any canvas edge or HTTP successSignals references the signal. */
+export function signalInUse(canvas: CanvasData, signal: string): boolean {
+  for (const e of canvas.edges) {
+    if (e.data?.signal === signal) return true;
+  }
+  for (const n of canvas.nodes) {
+    const successSignals = n.data.http?.successSignals ?? [];
+    if (successSignals.includes(signal)) return true;
+  }
+  return false;
+}
+
 export function removeSignal(
   registry: ProjectRegistry,
-  signal: string
+  signal: string,
+  canvas?: CanvasData
 ): ProjectRegistry {
+  if (canvas && signalInUse(canvas, signal)) {
+    throw new Error(`SIGNAL_IN_USE: ${signal} is referenced on the canvas`);
+  }
   return {
     ...registry,
     customSignals: registry.customSignals.filter((s) => s.signal !== signal),
   };
+}
+
+export function removeCustomState(
+  registry: ProjectRegistry,
+  stateId: string
+): ProjectRegistry {
+  return {
+    ...registry,
+    customStates: registry.customStates.filter((s) => s.id !== stateId),
+  };
+}
+
+export interface GroupedSignalPreset {
+  namespace: string;
+  items: { signal: string; kind: EdgeKind; hint: string }[];
+}
+
+/** Built-in + registry presets grouped by namespace for edge inspector (013 F2). */
+export function groupedSignalPresets(
+  registry: ProjectRegistry
+): GroupedSignalPreset[] {
+  const byNs = new Map<string, GroupedSignalPreset["items"]>();
+
+  const add = (signal: string, kind: EdgeKind, hint: string) => {
+    const ns = signalNamespace(signal);
+    const list = byNs.get(ns) ?? [];
+    if (!list.some((i) => i.signal === signal)) {
+      list.push({ signal, kind, hint });
+      byNs.set(ns, list);
+    }
+  };
+
+  for (const preset of SIGNAL_PRESETS) {
+    add(preset.signal, preset.kind, preset.hint);
+  }
+  for (const custom of registry.customSignals) {
+    add(
+      custom.signal,
+      "script",
+      custom.description?.trim() || "project-registered signal"
+    );
+  }
+
+  const order = [
+    "SCRIPT",
+    "HTTP",
+    "VALIDATE",
+    "AI",
+    "EXTERNAL_AI",
+    "HUMAN",
+    "SPAWN",
+    "STATE",
+    "TRANSITION",
+    "SYSTEM",
+  ];
+  const sorted = [...byNs.entries()].sort(([a], [b]) => {
+    const ai = order.indexOf(a);
+    const bi = order.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+
+  return sorted.map(([namespace, items]) => ({ namespace, items }));
+}
+
+export function executorKindToStateType(
+  kind: CustomStateType["executorKind"]
+): FSMStateType {
+  switch (kind) {
+    case "script":
+      return "SCRIPT";
+    case "http":
+      return "HTTP";
+    case "ai":
+      return "AI";
+    case "none":
+      return "VALIDATE";
+  }
 }
 
 export function removeSkill(

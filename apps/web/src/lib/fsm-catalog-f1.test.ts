@@ -139,8 +139,12 @@ describe("013 F1 — registry", () => {
   });
 
   it("registerSignal accepts custom namespace and is idempotent", () => {
-    const once = registerSignal(emptyRegistry(), "::MYAPP.DONE", "ok done");
-    const twice = registerSignal(once, "::MYAPP.DONE", "ok done");
+    const once = registerSignal(
+      emptyRegistry(),
+      "::MYAPP.DONE",
+      "ok done signal"
+    );
+    const twice = registerSignal(once, "::MYAPP.DONE", "ok done signal");
     expect(twice.customSignals).toHaveLength(1);
     expect(twice.customSignals[0]?.signal).toBe("::MYAPP.DONE");
   });
@@ -170,7 +174,11 @@ describe("013 F1 — canvas DSL + lint", () => {
   });
 
   it("lintCanvas accepts registered custom signals", () => {
-    const registry = registerSignal(emptyRegistry(), "::MYAPP.DONE", "ok done");
+    const registry = registerSignal(
+      emptyRegistry(),
+      "::MYAPP.DONE",
+      "ok done signal"
+    );
     const canvas: CanvasData = {
       nodes: [node("S0", "START"), node("END", "END")],
       edges: [edge("e1", "S0", "END", "::MYAPP.DONE")],
@@ -180,7 +188,11 @@ describe("013 F1 — canvas DSL + lint", () => {
   });
 
   it("canvasToDsl emits successCondition, customTypeId, and extensions.registry", () => {
-    const registry = registerSignal(emptyRegistry(), "::MYAPP.DONE", "ok done");
+    const registry = registerSignal(
+      emptyRegistry(),
+      "::MYAPP.DONE",
+      "ok done signal"
+    );
     const canvas: CanvasData = {
       nodes: [
         node("S0", "START"),
