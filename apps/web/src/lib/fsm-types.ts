@@ -133,11 +133,32 @@ export interface HumanConfig {
   onTimeout?: { signal: string; to?: string };
 }
 
-/** Card 3 — guardrails & fallback logic (§10.3) */
+/** Per-state retry reasons (FeatureShipping 014 R1) */
+export type RetryReason =
+  | "timeout"
+  | "execute"
+  | "output_schema"
+  | "verify_fail"
+  | "tool_denied";
+
+export const DEFAULT_RETRY_ON: RetryReason[] = [
+  "timeout",
+  "execute",
+  "output_schema",
+];
+
+/** Card 3 — guardrails & fallback logic (§10.3 + 014 R1) */
 export interface GuardrailConfig {
   timeoutMs: number;
   retryMax: number;
   retryBackoffMs: number;
+  retryOn: RetryReason[];
+}
+
+/** Per-state tool grant policy (FeatureShipping 014 R4) */
+export interface ToolAccess {
+  mode: "inherit" | "allowlist" | "deny_all";
+  allow: string[];
 }
 
 export type AggregationStrategy = "waitAll" | "quorum" | "firstSuccess";
@@ -252,6 +273,9 @@ export interface StateNodeData extends Record<string, unknown> {
   externalAi: ExternalAIConfig;
   human: HumanConfig;
   guardrails: GuardrailConfig;
+  toolAccess: ToolAccess;
+  /** Opt-in: skip per-state memory wipe after success (014 R5) */
+  retainContext: boolean;
   spawn: SpawnConfig;
   aggregate: AggregateConfig;
   systemFunction: SystemFunctionConfig;
@@ -514,6 +538,55 @@ export function defaultExternalAiConfig(): ExternalAIConfig {
   };
 }
 
+export function defaultToolAccess(): ToolAccess {
+  return { mode: "inherit", allow: [] };
+}
+
+export function normalizeGuardrails(raw: unknown): GuardrailConfig {
+  const base: GuardrailConfig = {
+    timeoutMs: 30000,
+    retryMax: 2,
+    retryBackoffMs: 1000,
+    retryOn: [...DEFAULT_RETRY_ON],
+  };
+  if (!raw || typeof raw !== "object") return base;
+  const g = raw as Record<string, unknown>;
+  const retryOn = Array.isArray(g.retryOn)
+    ? (g.retryOn as RetryReason[]).filter((r) =>
+        (
+          [
+            "timeout",
+            "execute",
+            "output_schema",
+            "verify_fail",
+            "tool_denied",
+          ] as const
+        ).includes(r)
+      )
+    : base.retryOn;
+  return {
+    timeoutMs: typeof g.timeoutMs === "number" ? g.timeoutMs : base.timeoutMs,
+    retryMax: typeof g.retryMax === "number" ? g.retryMax : base.retryMax,
+    retryBackoffMs:
+      typeof g.retryBackoffMs === "number" ? g.retryBackoffMs : base.retryBackoffMs,
+    retryOn: retryOn.length > 0 ? retryOn : base.retryOn,
+  };
+}
+
+export function normalizeToolAccess(raw: unknown): ToolAccess {
+  const base = defaultToolAccess();
+  if (!raw || typeof raw !== "object") return base;
+  const t = raw as Record<string, unknown>;
+  const mode =
+    t.mode === "allowlist" || t.mode === "deny_all" ? t.mode : base.mode;
+  return {
+    mode,
+    allow: Array.isArray(t.allow)
+      ? (t.allow as string[]).map((s) => String(s).trim()).filter(Boolean)
+      : base.allow,
+  };
+}
+
 export function defaultHumanConfig(): HumanConfig {
   return {
     prompt: "Please review and approve to continue.",
@@ -711,7 +784,14 @@ export function defaultNodeData(
     validate: defaultValidateConfig(),
     externalAi: defaultExternalAiConfig(),
     human: defaultHumanConfig(),
-    guardrails: { timeoutMs: 30000, retryMax: 2, retryBackoffMs: 1000 },
+    guardrails: {
+      timeoutMs: 30000,
+      retryMax: 2,
+      retryBackoffMs: 1000,
+      retryOn: [...DEFAULT_RETRY_ON],
+    },
+    toolAccess: defaultToolAccess(),
+    retainContext: false,
     spawn: defaultSpawnConfig(),
     aggregate: defaultAggregateConfig(),
     systemFunction: {

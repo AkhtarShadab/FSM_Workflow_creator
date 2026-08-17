@@ -13,6 +13,7 @@ import { useCanvasStore } from "@/stores/canvas-store";
 import {
   AggregateCard,
   ConditionsCard,
+  ContextCard,
   GenerativeConfigCard,
   GuardrailsCard,
   HttpCard,
@@ -21,10 +22,29 @@ import {
   SpawnCard,
   SystemFunctionCard,
   SuccessCard,
+  ToolsCard,
   ValidateCard,
   ExternalAICard,
   VerifiabilityCard,
 } from "./inspector-cards";
+
+const TOOL_ACCESS_TYPES = new Set([
+  "SCRIPT",
+  "HTTP",
+  "AI",
+  "EXTERNAL_AI",
+  "VALIDATE",
+  "HUMAN",
+]);
+
+const CONTEXT_TYPES = new Set([
+  "SCRIPT",
+  "HTTP",
+  "VALIDATE",
+  "AI",
+  "EXTERNAL_AI",
+  "HUMAN",
+]);
 
 const EMPTY_NODES: import("@/lib/fsm-types").StateNode[] = [];
 const EMPTY_EDGES: import("@/lib/fsm-types").TransitionEdge[] = [];
@@ -152,6 +172,12 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
                   <>
                     <VerifiabilityCard node={node} patch={patch} />
                     <GuardrailsCard node={node} patch={patch} />
+                    {TOOL_ACCESS_TYPES.has(node.data.stateType) && (
+                      <ToolsCard node={node} patch={patch} />
+                    )}
+                    {CONTEXT_TYPES.has(node.data.stateType) && (
+                      <ContextCard node={node} patch={patch} />
+                    )}
                   </>
                 )}
 

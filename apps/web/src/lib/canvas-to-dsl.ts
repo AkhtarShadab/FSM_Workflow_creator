@@ -2,8 +2,10 @@ import {
   isStateDisabledByMask,
   normalizeAggregate,
   normalizeEdgeData,
+  normalizeGuardrails,
   normalizeSpawn,
   normalizeSystemFunction,
+  normalizeToolAccess,
   primaryProfile,
   SYSFUNC_HEADS_WARN_THRESHOLD,
   type CanvasData,
@@ -75,6 +77,10 @@ export function canvasToDsl(
       onError: node.data.onError ?? { signal: "::SCRIPT.ERROR" },
     };
 
+    const guardrails = normalizeGuardrails(node.data.guardrails);
+    const toolAccess = normalizeToolAccess(node.data.toolAccess);
+    const retainContext = node.data.retainContext === true;
+
     const base = {
       id: node.id,
       type: node.data.stateType,
@@ -89,6 +95,17 @@ export function canvasToDsl(
       ...(node.data.stateType === "END" && node.data.terminal
         ? { terminal: node.data.terminal }
         : {}),
+      guardrails: {
+        timeoutMs: guardrails.timeoutMs,
+        retryMax: guardrails.retryMax,
+        retryBackoffMs: guardrails.retryBackoffMs,
+        retryOn: guardrails.retryOn,
+      },
+      toolAccess: {
+        mode: toolAccess.mode,
+        allow: toolAccess.allow,
+      },
+      retainContext,
       ...verifiability,
       transitions,
     };
@@ -100,10 +117,11 @@ export function canvasToDsl(
           tool: {
             name: node.data.script.toolName,
             language: node.data.script.language,
-            timeoutMs: node.data.guardrails.timeoutMs,
+            timeoutMs: guardrails.timeoutMs,
             retry: {
-              max: node.data.guardrails.retryMax,
-              backoffMs: node.data.guardrails.retryBackoffMs,
+              max: guardrails.retryMax,
+              backoffMs: guardrails.retryBackoffMs,
+              retryOn: guardrails.retryOn,
             },
           },
         };
@@ -197,7 +215,7 @@ export function canvasToDsl(
             cancelOnParentHalt: spawn.cancelOnParentHalt,
             profiles: spawn.profiles,
             aggregateTo: spawn.aggregateTo,
-            timeoutMs: node.data.guardrails.timeoutMs,
+            timeoutMs: guardrails.timeoutMs,
           },
         };
       }
@@ -947,6 +965,61 @@ export function lintCanvas(
           )
         );
       }
+    }
+  }
+
+  for (const n of nodes) {
+    const guardrails = normalizeGuardrails(n.data.guardrails);
+    const ignoredRetryTypes = new Set([
+      "HUMAN",
+      "START",
+      "END",
+      "SYSTEM_FUNCTION",
+      "SPAWN",
+      "AGGREGATE",
+    ]);
+    if (ignoredRetryTypes.has(n.data.stateType) && guardrails.retryMax > 0) {
+      issues.push(
+        issue(
+          "warning",
+          "RETRY_IGNORED_ON_TYPE",
+          `${n.data.stateType} "${n.data.label}": retryMax is ignored on this state type (use self-loop or HUMAN onTimeout instead).`,
+          n.id
+        )
+      );
+    }
+
+    if (n.data.stateType === "AI" && n.data.retainContext === true) {
+      issues.push(
+        issue(
+          "warning",
+          "RETAIN_CONTEXT_COST",
+          `AI "${n.data.label}": retainContext keeps full chat history — increases token cost for downstream states.`,
+          n.id
+        )
+      );
+    }
+
+    const sc = n.data.successCondition;
+    if (sc?.kind === "llm_verify" && !sc.credentialId?.trim()) {
+      issues.push(
+        issue(
+          "error",
+          "VERIFY_MISSING_CREDENTIAL",
+          `${n.data.stateType} "${n.data.label}": llm_verify success condition requires a judge credential.`,
+          n.id
+        )
+      );
+    }
+    if (sc?.kind === "predicate" && !sc.expr?.trim()) {
+      issues.push(
+        issue(
+          "warning",
+          "PREDICATE_EMPTY",
+          `${n.data.stateType} "${n.data.label}": predicate success condition has an empty expr.`,
+          n.id
+        )
+      );
     }
   }
 

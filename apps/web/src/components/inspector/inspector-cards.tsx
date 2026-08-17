@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { BookmarkPlus, Plus, Trash2 } from "lucide-react";
 import type {
   AggregationStrategy,
+  RetryReason,
   SpawnConfig,
   StateNode,
   SuccessCondition,
@@ -36,8 +37,10 @@ import {
   defaultRouterHead,
   defaultValidateConfig,
   normalizeAggregate,
+  normalizeGuardrails,
   normalizeSpawn,
   normalizeSystemFunction,
+  normalizeToolAccess,
   primaryProfile,
 } from "@/lib/fsm-types";
 import { useCredentialStore } from "@/stores/credential-store";
@@ -59,6 +62,14 @@ const FALLBACK_MODELS = [
   "gpt-4o",
   "gpt-4o-mini",
   "claude-opus-4-1",
+];
+
+const RETRY_REASON_OPTIONS: { value: RetryReason; label: string }[] = [
+  { value: "timeout", label: "timeout" },
+  { value: "execute", label: "execute" },
+  { value: "output_schema", label: "output_schema" },
+  { value: "verify_fail", label: "verify_fail" },
+  { value: "tool_denied", label: "tool_denied" },
 ];
 
 interface CardProps {
@@ -467,11 +478,20 @@ export function VerifiabilityCard({ node, patch }: CardProps) {
 
 /** Card 3 — Guardrails & Fallback Logic; Meteors when in error state (§10.3) */
 export function GuardrailsCard({ node, patch }: CardProps) {
-  const g = node.data.guardrails;
+  const g = normalizeGuardrails(node.data.guardrails);
   const hasError =
     g.timeoutMs < 500 ||
     (node.data.stateType === "SCRIPT" && node.data.script.code.trim() === "") ||
     (node.data.stateType === "AI" && node.data.ai.systemPrompt.trim() === "");
+
+  const toggleRetryOn = (reason: RetryReason, on: boolean) => {
+    const next = on
+      ? g.retryOn.includes(reason)
+        ? g.retryOn
+        : [...g.retryOn, reason]
+      : g.retryOn.filter((r) => r !== reason);
+    patch({ guardrails: { ...g, retryOn: next.length > 0 ? next : g.retryOn } });
+  };
 
   return (
     <div
@@ -479,6 +499,7 @@ export function GuardrailsCard({ node, patch }: CardProps) {
         "relative overflow-hidden rounded-xl border bg-background/80 p-4 " +
         (hasError ? "border-red-400/40" : "border-foreground/10")
       }
+      data-testid="guardrails-card"
     >
       {hasError && <Meteors number={10} />}
       <div className="relative">
@@ -516,6 +537,7 @@ export function GuardrailsCard({ node, patch }: CardProps) {
                 })
               }
               className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              data-testid="guardrails-retry-max"
             />
           </div>
           <div className="space-y-1.5">
@@ -533,6 +555,38 @@ export function GuardrailsCard({ node, patch }: CardProps) {
           </div>
         </div>
 
+        <div className="mt-3 space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Retry on</Label>
+          <div
+            className="flex flex-wrap gap-1.5"
+            data-testid="guardrails-retry-on"
+          >
+            {RETRY_REASON_OPTIONS.map(({ value, label }) => {
+              const active = g.retryOn.includes(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`retry-on-${value}`}
+                  onClick={() => toggleRetryOn(value, !active)}
+                  className={cn(
+                    "rounded-md border px-2 py-1 font-mono text-[10px] transition-colors",
+                    active
+                      ? "border-sky-400/50 bg-sky-400/15 text-sky-200"
+                      : "border-foreground/10 bg-foreground/5 text-muted-foreground hover:bg-foreground/10"
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Guardrail retries are distinct from self-loop maxIterations — they
+            re-run the executor, not the graph edge.
+          </p>
+        </div>
+
         {hasError && (
           <p className="mt-3 text-xs text-red-300/90">
             {g.timeoutMs < 500
@@ -543,6 +597,118 @@ export function GuardrailsCard({ node, patch }: CardProps) {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Per-state tool grant policy (FeatureShipping 014 R4) */
+export function ToolsCard({ node, patch }: CardProps) {
+  const toolAccess = normalizeToolAccess(node.data.toolAccess);
+  const scriptTool = node.data.script?.toolName?.trim();
+
+  const patchToolAccess = (partial: Partial<typeof toolAccess>) =>
+    patch({ toolAccess: { ...toolAccess, ...partial } });
+
+  return (
+    <div
+      className="rounded-xl border border-foreground/10 bg-background/80 p-4"
+      data-testid="tools-card"
+    >
+      <h3 className="mb-1 text-sm font-semibold text-foreground">Tools</h3>
+      <p className="mb-3 text-[10px] text-muted-foreground">
+        Control which tools this state may call. inherit uses the cluster mask;
+        allowlist intersects with inherit; deny_all blocks all tools.
+      </p>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Mode</Label>
+          <Select
+            value={toolAccess.mode}
+            onValueChange={(v) => {
+              if (
+                v === "inherit" ||
+                v === "allowlist" ||
+                v === "deny_all"
+              ) {
+                patchToolAccess({ mode: v });
+              }
+            }}
+          >
+            <SelectTrigger
+              className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+              data-testid="tool-access-mode"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-foreground/10 bg-popover text-foreground">
+              <SelectItem value="inherit">inherit (cluster mask)</SelectItem>
+              <SelectItem value="allowlist">allowlist</SelectItem>
+              <SelectItem value="deny_all">deny_all</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {toolAccess.mode === "allowlist" && (
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">
+              Allowed tools (comma / newline separated)
+            </Label>
+            <Textarea
+              value={toolAccess.allow.join(", ")}
+              onChange={(e) =>
+                patchToolAccess({ allow: csvToList(e.target.value) })
+              }
+              placeholder={
+                scriptTool
+                  ? `${scriptTool}, fetch_pages`
+                  : "fetch_pages, write_report"
+              }
+              className="min-h-[72px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+              data-testid="tool-access-allow"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Per-state memory retention (FeatureShipping 014 R5) */
+export function ContextCard({ node, patch }: CardProps) {
+  const retainContext = node.data.retainContext === true;
+
+  return (
+    <div
+      className="rounded-xl border border-foreground/10 bg-background/80 p-4"
+      data-testid="context-card"
+    >
+      <h3 className="mb-1 text-sm font-semibold text-foreground">Context</h3>
+      <p className="mb-3 text-[10px] text-muted-foreground">
+        By default, conversational history is cleared after this state succeeds
+        so the next state starts clean.
+      </p>
+      <div className="flex items-center justify-between gap-2 rounded-lg border border-foreground/10 px-3 py-2">
+        <Label
+          htmlFor="retain-context"
+          className="text-xs text-muted-foreground"
+        >
+          Retain context after success
+        </Label>
+        <Switch
+          id="retain-context"
+          checked={retainContext}
+          onCheckedChange={(v) => patch({ retainContext: Boolean(v) })}
+          data-testid="retain-context"
+        />
+      </div>
+      {retainContext && node.data.stateType === "AI" && (
+        <p
+          className="mt-2 rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1.5 text-[10px] text-amber-300"
+          data-testid="retain-context-cost-hint"
+        >
+          Retaining context on AI states increases token cost — downstream states
+          will see the full chat history.
+        </p>
+      )}
     </div>
   );
 }
