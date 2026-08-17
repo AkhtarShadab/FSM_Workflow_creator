@@ -1,49 +1,46 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Check, Download, FileArchive, GitBranch } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { Check, Download, Loader2 } from "lucide-react";
+import { listVersions } from "@/app/project/[id]/actions";
+import { listExportJobs } from "@/app/project/[id]/export/actions";
 import { BlurFade } from "@/components/ui/blur-fade";
 import { ThemedMagicCard } from "@/components/themed-magic-card";
 import { RainbowButton } from "@/components/ui/rainbow-button";
-import {
-  AnimatedSpan,
-  Terminal,
-  TypingAnimation,
-} from "@/components/ui/terminal";
+import { Badge } from "@/components/ui/badge";
 import { ProjectNav } from "@/components/nav/project-nav";
 import { cn } from "@/lib/utils";
-import { canvasToDsl } from "@/lib/canvas-to-dsl";
-import { useCanvasStore } from "@/stores/canvas-store";
+import type { VersionRow } from "@/lib/draft-sync";
+import type { ExportJobRow, ToolLanguage } from "@/lib/export/zip-harness";
 
-const LANGUAGES = [
+const LANGUAGES: { id: ToolLanguage; label: string; desc: string }[] = [
   { id: "python", label: "Python", desc: "grpcio server, module-per-tool" },
-  { id: "cpp", label: "C++", desc: "gRPC C++ server, compiled registry" },
   { id: "bash", label: "Bash", desc: "Python shim execs bash scripts" },
-] as const;
+];
 
-const STORES = [
-  { id: "redis", label: "Redis", desc: "Default checkpoint store (24h TTL)" },
-  { id: "mongo", label: "MongoDB", desc: "Document checkpoint store" },
-  { id: "sql", label: "SQL", desc: "Relational checkpoint store" },
-] as const;
+function shortHash(hash: string): string {
+  return hash.length <= 12 ? hash : `${hash.slice(0, 12)}…`;
+}
 
-const TARGETS = [
-  { id: "zip", label: "ZIP bundle", desc: "Downloadable harness archive", Icon: FileArchive },
-  { id: "git", label: "Git push", desc: "Direct commit to your repo (Q24)", Icon: GitBranch },
-] as const;
+function formatCreatedAt(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
 
-const COMPOSE_PREVIEW = `services:
-  fsm-controller:
-    build: { dockerfile: Dockerfile.controller }
-    environment:
-      - CHECKPOINT_STORE_URL=redis://store:6379
-  tools-python:
-    build: { dockerfile: Dockerfile.tools-python }
-  store:
-    image: redis:7
-  byok-gateway:
-    build: { dockerfile: Dockerfile.gateway }
-    env_file: .env   # BYOK base URL + key`;
+function formatBytes(n: number | null): string {
+  if (n == null) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function filenameFromDisposition(header: string | null): string {
+  if (!header) return "harness.zip";
+  const match = /filename="([^"]+)"/.exec(header);
+  return match?.[1] ?? "harness.zip";
+}
 
 export function ExportWizard({
   projectId,
@@ -52,54 +49,97 @@ export function ExportWizard({
   projectId: string;
   projectName: string;
 }) {
-  const [language, setLanguage] = useState<string>("python");
-  const [store, setStore] = useState<string>("redis");
-  const [target, setTarget] = useState<string>("zip");
+  const [versions, setVersions] = useState<VersionRow[]>([]);
+  const [jobs, setJobs] = useState<ExportJobRow[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [language, setLanguage] = useState<ToolLanguage>("python");
+  const [includeMemory, setIncludeMemory] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-
-  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes);
-  const edges = useCanvasStore((s) => s.canvases[projectId]?.edges);
-
-  const dsl = useMemo(
-    () =>
-      canvasToDsl(
-        { nodes: nodes ?? [], edges: edges ?? [] },
-        { name: projectName }
-      ),
-    [nodes, edges, projectName]
+  const [error, setError] = useState<string | null>(null);
+  const [lintIssues, setLintIssues] = useState<Array<{ code: string; message: string }>>(
+    []
   );
+  const [sizeWarning, setSizeWarning] = useState(false);
 
-  const downloadDsl = () => {
-    const blob = new Blob([JSON.stringify(dsl, null, 2)], {
-      type: "application/json",
+  const selected = versions.find((v) => v.id === selectedId) ?? versions[0];
+
+  const refresh = useCallback(async () => {
+    const pid = Number(projectId);
+    const [nextVersions, nextJobs] = await Promise.all([
+      listVersions(pid),
+      listExportJobs(pid),
+    ]);
+    setVersions(nextVersions);
+    setJobs(nextJobs);
+    setSelectedId((current) => {
+      if (current && nextVersions.some((v) => v.id === current)) return current;
+      return nextVersions[0]?.id ?? null;
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "fsm.json";
-    a.click();
-    URL.revokeObjectURL(url);
-    setDownloaded(true);
-    setTimeout(() => setDownloaded(false), 2000);
-  };
+  }, [projectId]);
 
-  const Section = ({
-    title,
-    accent,
-    children,
-  }: {
-    title: string;
-    accent: string;
-    children: React.ReactNode;
-  }) => (
-    <section>
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
-        <span className={cn("h-2 w-2 rounded-full", accent)} />
-        {title}
-      </h2>
-      {children}
-    </section>
-  );
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void refresh()
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load export data");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
+  const downloadZip = async () => {
+    if (!selected) return;
+    setDownloading(true);
+    setError(null);
+    setLintIssues([]);
+    setSizeWarning(false);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          versionId: selected.id,
+          toolLanguage: language,
+          includeMemory,
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+          issues?: Array<{ code: string; message: string }>;
+        };
+        setError(data.error ?? "Export failed");
+        setLintIssues(data.issues ?? []);
+        await refresh().catch(() => undefined);
+        return;
+      }
+      setSizeWarning(res.headers.get("X-Export-Size-Warning") === "1");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filenameFromDisposition(res.headers.get("Content-Disposition"));
+      a.click();
+      URL.revokeObjectURL(url);
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+      await refresh().catch(() => undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="flex h-screen flex-col bg-background">
@@ -111,113 +151,210 @@ export function ExportWizard({
             <div>
               <h1 className="text-2xl font-bold text-foreground">Export harness</h1>
               <p className="text-sm text-muted-foreground">
-                Compile the canvas into a standalone Docker bundle (§11).
+                Download a published version as a standalone Docker ZIP.
               </p>
             </div>
           </BlurFade>
 
-          <BlurFade delay={0.1} inView>
-          <Section title="1 · Tool language (Q17)" accent="bg-sky-400">
-            <div className="grid gap-3 sm:grid-cols-3">
-              {LANGUAGES.map((l) => (
-                <button key={l.id} onClick={() => setLanguage(l.id)}>
-                  <ThemedMagicCard
-                    className={cn(
-                      "rounded-xl border p-4 text-left",
-                      language === l.id
-                        ? "border-sky-400/60 bg-sky-400/10"
-                        : "border-foreground/10 bg-foreground/5"
-                    )}
-                  >
-                    <p className="font-semibold text-foreground">{l.label}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{l.desc}</p>
-                  </ThemedMagicCard>
-                </button>
-              ))}
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading published versions…
             </div>
-          </Section>
-          </BlurFade>
-
-          <BlurFade delay={0.15} inView>
-          <Section title="2 · Checkpoint store" accent="bg-[#A07CFE]">
-            <div className="grid gap-3 sm:grid-cols-3">
-              {STORES.map((s) => (
-                <button key={s.id} onClick={() => setStore(s.id)}>
-                  <ThemedMagicCard
-                    className={cn(
-                      "rounded-xl border p-4 text-left",
-                      store === s.id
-                        ? "border-purple-400/60 bg-purple-400/10"
-                        : "border-foreground/10 bg-foreground/5"
-                    )}
-                  >
-                    <p className="font-semibold text-foreground">{s.label}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{s.desc}</p>
-                  </ThemedMagicCard>
-                </button>
-              ))}
+          ) : versions.length === 0 ? (
+            <div
+              className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-6"
+              data-testid="publish-prompt"
+            >
+              <p className="font-semibold text-foreground">Publish a version first</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Export compiles an immutable published FSM. Open the canvas, then
+                publish.
+              </p>
+              <Link
+                href={`/project/${projectId}/canvas`}
+                data-testid="open-canvas-link"
+                className="mt-4 inline-flex text-sm font-medium text-sky-400 hover:underline"
+              >
+                Open canvas
+              </Link>
             </div>
-          </Section>
-          </BlurFade>
+          ) : (
+            <>
+              <section>
+                <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
+                  <span className="h-2 w-2 rounded-full bg-sky-400" />
+                  1 · Version
+                </h2>
+                <ul className="grid gap-3 sm:grid-cols-2" data-testid="export-version-list">
+                  {versions.map((row) => {
+                    const active = selected?.id === row.id;
+                    return (
+                      <li key={row.id}>
+                        <button
+                          type="button"
+                          data-testid="export-version-row"
+                          data-version={row.version}
+                          onClick={() => setSelectedId(row.id)}
+                          className="w-full text-left"
+                        >
+                          <ThemedMagicCard
+                            className={cn(
+                              "rounded-xl border p-4",
+                              active
+                                ? "border-sky-400/60 bg-sky-400/10"
+                                : "border-foreground/10 bg-foreground/5"
+                            )}
+                          >
+                            <p className="font-semibold text-foreground">
+                              v{row.version}
+                              {row.label ? (
+                                <span className="ml-2 font-normal text-muted-foreground">
+                                  {row.label}
+                                </span>
+                              ) : null}
+                            </p>
+                            <p
+                              data-testid="export-version-hash"
+                              title={row.contentHash}
+                              className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                            >
+                              {shortHash(row.contentHash)}
+                            </p>
+                          </ThemedMagicCard>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
 
-          <BlurFade delay={0.2} inView>
-          <Section title="3 · Target" accent="bg-emerald-400">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {TARGETS.map(({ id, label, desc, Icon }) => (
-                <button key={id} onClick={() => setTarget(id)}>
-                  <ThemedMagicCard
-                    className={cn(
-                      "flex items-center gap-3 rounded-xl border p-4 text-left",
-                      target === id
-                        ? "border-emerald-400/60 bg-emerald-400/10"
-                        : "border-foreground/10 bg-foreground/5"
-                    )}
+              <section>
+                <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
+                  <span className="h-2 w-2 rounded-full bg-[#A07CFE]" />
+                  2 · Options
+                </h2>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {LANGUAGES.map((l) => (
+                    <button key={l.id} type="button" onClick={() => setLanguage(l.id)}>
+                      <ThemedMagicCard
+                        className={cn(
+                          "rounded-xl border p-4 text-left",
+                          language === l.id
+                            ? "border-purple-400/60 bg-purple-400/10"
+                            : "border-foreground/10 bg-foreground/5"
+                        )}
+                      >
+                        <p className="font-semibold text-foreground">{l.label}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{l.desc}</p>
+                      </ThemedMagicCard>
+                    </button>
+                  ))}
+                </div>
+                <label className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={includeMemory}
+                    onChange={(e) => setIncludeMemory(e.target.checked)}
+                    data-testid="include-memory"
+                  />
+                  Include memory.json (most recent nodes)
+                </label>
+              </section>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <RainbowButton
+                  onClick={() => void downloadZip()}
+                  disabled={downloading || !selected}
+                  className="gap-2"
+                  data-testid="download-zip-button"
+                >
+                  {downloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : downloaded ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  {downloaded ? "Downloaded!" : "Download ZIP"}
+                </RainbowButton>
+                {selected ? (
+                  <span className="font-mono text-xs text-muted-foreground" data-testid="selected-hash">
+                    {shortHash(selected.contentHash)}
+                  </span>
+                ) : null}
+              </div>
+
+              {sizeWarning ? (
+                <p className="text-xs text-amber-400" data-testid="size-warning">
+                  Bundle is over 50 MB; export continued and size was logged.
+                </p>
+              ) : null}
+
+              {error ? (
+                <div
+                  className="rounded-lg border border-red-400/40 bg-red-400/10 p-3 text-sm text-red-300"
+                  data-testid="export-error"
+                >
+                  {error}
+                  {lintIssues.length > 0 ? (
+                    <ul className="mt-2 list-disc space-y-1 pl-5" data-testid="lint-errors">
+                      {lintIssues.map((issue) => (
+                        <li key={`${issue.code}-${issue.message}`}>
+                          {issue.code}: {issue.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
+
+          <section>
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Export history
+            </h2>
+            {jobs.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid="export-history-empty">
+                No export jobs yet.
+              </p>
+            ) : (
+              <ul className="space-y-2" data-testid="export-history">
+                {jobs.map((job) => (
+                  <li
+                    key={job.id}
+                    data-testid="export-job-row"
+                    data-status={job.status}
+                    data-hash={job.contentHash ?? ""}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-sm"
                   >
-                    <Icon className="h-5 w-5 text-muted-foreground" />
-                    <div>
-                      <p className="font-semibold text-foreground">{label}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-[10px]">
+                          {job.status}
+                        </Badge>
+                        <span>v{job.version}</span>
+                        <span className="text-muted-foreground">{job.target}</span>
+                      </div>
+                      <p
+                        className="truncate font-mono text-[11px] text-muted-foreground"
+                        title={job.contentHash ?? ""}
+                        data-testid="export-job-hash"
+                      >
+                        {job.contentHash ? shortHash(job.contentHash) : "—"}
+                      </p>
                     </div>
-                  </ThemedMagicCard>
-                </button>
-              ))}
-            </div>
-          </Section>
-          </BlurFade>
-
-          <BlurFade delay={0.25} inView>
-          <Section title="4 · docker-compose preview" accent="bg-amber-400">
-            <Terminal className="max-w-full border-foreground/10 bg-background text-left">
-              <TypingAnimation className="text-emerald-400">
-                $ docker compose config
-              </TypingAnimation>
-              {COMPOSE_PREVIEW.split("\n").map((line, i) => (
-                <AnimatedSpan key={i} className="text-muted-foreground">
-                  {line}
-                </AnimatedSpan>
-              ))}
-              <TypingAnimation className="text-sky-400">
-                ✓ harness topology valid — 4 services
-              </TypingAnimation>
-            </Terminal>
-          </Section>
-          </BlurFade>
-
-          <BlurFade delay={0.3} inView>
-          <div className="flex items-center gap-3 pb-10">
-            <RainbowButton onClick={downloadDsl} className="gap-2">
-              {downloaded ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              {downloaded ? "Downloaded!" : "Download fsm.json"}
-            </RainbowButton>
-            <span className="text-xs text-muted-foreground">
-              {dsl.states.length} states · full ZIP/git export lands in Phase 5
-            </span>
-          </div>
-          </BlurFade>
+                    <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+                      <p>{formatBytes(job.sizeBytes)}</p>
+                      <p>{formatCreatedAt(job.createdAt)}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
       </main>
     </div>
