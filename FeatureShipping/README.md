@@ -34,22 +34,32 @@ Every feature doc should include:
 6. **Edge cases & failure modes**
 7. **Open questions**
 8. **Suggested implementation phases** — for `ship-feature`
-9. **Acceptance criteria** — for `test-feature`
+9. **Test plan** — named Vitest and Playwright cases, for `test-feature`
+10. **Acceptance criteria**
 
-Design-status stubs may start as concise **What / How / Why** plus goals and open questions, then expand via **detail-feature**.
+Every doc opens with concise **What / How / Why**. Design-status stubs may stop there
+plus goals and open questions, then expand to Detailed via **detail-feature**.
 
 ## Index
 
-| Doc | Feature | Status |
-|-----|---------|--------|
-| [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents, engine, registry | **Complete** (C1–C7) — Round 2: SYS_FUNC router heads, SPAWN/AGGREGATE cardinality, HUMAN + self-loops, richer connection kinds |
-| [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | **Detailed** |
-| [003-live-executors.md](003-live-executors.md) | Real AI + HTTP executors streaming into run events | **Design** |
-| [004-harness-export.md](004-harness-export.md) | Export wizard → Docker/Git runnable harness | **Design** |
-| [005-credential-security.md](005-credential-security.md) | Encrypted credentials + SSRF-safe discovery | **Design** |
-| [006-ci-pipeline.md](006-ci-pipeline.md) | GitHub Actions: typecheck, unit tests, later Playwright | **Design** |
-| [007-calendar.md](007-calendar.md) | Calendar scheduling UI (replaces "Soon" tile) | **Design** |
-| [008-notifications.md](008-notifications.md) | In-app notifications for runs / schedules / budgets | **Design** |
+Sequencing lives in [000-completion-roadmap.md](000-completion-roadmap.md):
+**§3 waves are merge-gates**; **§8 is the parallel ship plan** (schema bootstrap, four lanes, file ownership, first four `ship-feature` prompts).
+
+| Doc | Feature | Wave | Status |
+|-----|---------|------|--------|
+| [000-completion-roadmap.md](000-completion-roadmap.md) | Ordered plan to v1: waves, dependency graph, locked decisions | — | **Living** |
+| [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents, engine, registry | — | **Complete** (C1–C7) |
+| [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | parallel | **Detailed** |
+| [003-live-executors.md](003-live-executors.md) | Real AI / HTTP / VALIDATE / HUMAN executors, SSE run streaming | 1 | **Detailed** |
+| [004-harness-export.md](004-harness-export.md) | Deterministic codegen → ZIP / git runnable harness | 3 | **Detailed** |
+| [005-credential-security.md](005-credential-security.md) | AES-256-GCM credential storage; SSRF-safe discovery | 0 | **Detailed** (S1 shipped) |
+| [006-ci-pipeline.md](006-ci-pipeline.md) | Blocking lint, Playwright in CI, migration drift check | 0 | **Detailed** (CI1 shipped) |
+| [007-calendar.md](007-calendar.md) | Cron / one-shot scheduled runs + calendar UI | 4 | **Detailed** |
+| [008-notifications.md](008-notifications.md) | In-app notifications for runs / schedules / budgets | 1 | **Detailed** |
+| [009-canvas-persistence.md](009-canvas-persistence.md) | Server-side drafts, published versions, real run history | 0 | **Detailed** |
+| [010-tool-runtime-grpc.md](010-tool-runtime-grpc.md) | Python / Bash tools over gRPC, sandboxed | 2 | **Detailed** |
+| [011-token-and-observability.md](011-token-and-observability.md) | State 0 hydration, SYS_FUNC checkpoints, token ledger, budgets | 1 | **Detailed** |
+| [012-copilot.md](012-copilot.md) | Zod-validated tool-calling copilot replacing stub mode | 4 | **Detailed** |
 
 ## Naming
 
@@ -58,8 +68,9 @@ Design-status stubs may start as concise **What / How / Why** plus goals and ope
 
 ## Skills
 
-| Skill | Path |
-|-------|------|
+| Skill / agent | Path |
+|---------------|------|
 | detail-feature | [`.cursor/skills/detail-feature/`](../.cursor/skills/detail-feature/) |
 | ship-feature | [`.cursor/skills/ship-feature/`](../.cursor/skills/ship-feature/) |
 | test-feature | [`.cursor/skills/test-feature/`](../.cursor/skills/test-feature/) |
+| Parallel lanes | [`.cursor/agents/`](../.cursor/agents/README.md) — `ship-dispatcher`, then `schema-bootstrap` / `lane-persistence` / `lane-keys-ci` / `lane-greenfield` / `lane-runtime` |

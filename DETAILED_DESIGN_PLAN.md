@@ -860,11 +860,38 @@ jobs:
 | **0. Scaffold & de-risk** | Monorepo + Vitest/Playwright harness; CI landing separately | Scaffold green; spikes deferred | **Done** (monorepo `apps/web` + `packages/fsm-engine`; CI in hygiene PR) |
 | **1. Canvas foundation** | Next.js, React Flow, custom nodes/edges, Zustand, Magic UI bg | Component tests green; E2E: add node → connect → reload persists | **Done** (Feature 001 C1–C7) |
 | **2. Inspector + persistence** | Bento inspector, Turso/libSQL via Drizzle ORM, canvas↔DSL | DSL round-trip unit tests; E2E save/reload | **Done** (canvas + inspector + Drizzle/Turso on `apps/web`) |
-| **3. Engine + gRPC + BYOK** | Signal parser, run loop, gRPC bridge + Python shim, model discovery | Golden traces; contract suite; discovery E2E | **Partial** — `packages/fsm-engine` + in-app run loop + BYOK discovery UI; **live LLM/HTTP executors, gRPC shims, `byok-gateway` package still future** (see FeatureShipping 003/005) |
-| **4. Token optimization + subagents** | State 0, System Functions, SPAWN/AGGREGATE, memory-graph hydration | Token-budget + subagent tests; memory in State-0 map | **Partial** — SPAWN/AGGREGATE + SYS_FUNC on canvas (001); memory code-index (002) not shipped |
-| **5. Copilot + export** | Copilot tool-calling loop, export pipeline (ZIP/git) | Copilot E2E; exported harness smoke | **Not started** — `packages/export-engine` / harness export still future (FeatureShipping 004) |
+| **3. Engine + gRPC + BYOK** | Signal parser, run loop, gRPC bridge + Python shim, model discovery | Golden traces; contract suite; discovery E2E | **Partial** — `packages/fsm-engine` + in-app run loop + BYOK discovery UI; **live LLM/HTTP executors, gRPC shims, `byok-gateway` package still future** (see FeatureShipping 003/005/010) |
+| **4. Token optimization + subagents** | State 0, System Functions, SPAWN/AGGREGATE, memory-graph hydration | Token-budget + subagent tests; memory in State-0 map | **Partial** — SPAWN/AGGREGATE + SYS_FUNC on canvas (001); **runtime hydration/checkpoints/ledger not shipped** (011); memory code-index (002) not shipped |
+| **5. Copilot + export** | Copilot tool-calling loop, export pipeline (ZIP/git) | Copilot E2E; exported harness smoke | **Not started** — copilot is keyword-stub (012); `packages/export-engine` / harness export still future (004) |
 
-**Missing packages (future, not scaffolded yet):** `packages/byok-gateway`, `packages/export-engine`, `packages/fsm-schema` (if split from web), proto/gRPC tool shims (`tools-python` / `tools-cpp`). Tracked via FeatureShipping 003–006.
+**Missing packages (future, not scaffolded yet):** `packages/byok-gateway` (003),
+`packages/proto` + `packages/grpc-bridge` + `runtimes/tools-*` (010),
+`packages/export-engine` + `harness-templates/` (004), `packages/fsm-schema` (012).
+
+### 16.1 Completion plan (v1)
+
+Phases 3–5 above are decomposed into eleven FeatureShipping docs, all **Detailed**.
+Sequencing lives in
+[FeatureShipping/000-completion-roadmap.md](FeatureShipping/000-completion-roadmap.md):
+§3 waves are merge-gates; **§8 parallel lanes** are how work actually ships
+(schema bootstrap SB0, then four concurrent `ship-feature` sessions).
+
+| Wave | Docs | Gate to exit |
+|------|------|--------------|
+| 0 — Foundation | 009 canvas persistence, 005 credential security, 006 CI | Server is the source of truth; no plaintext keys; CI gates lint + unit + E2E |
+| 1 — Live runtime | 003 live executors, 011 token + observability, 008 notifications | A real AI + HTTP workflow runs, streams, records tokens, and notifies |
+| 2 — Determinism | 010 tool runtime (gRPC) | `SCRIPT` executes sandboxed Python/Bash tools |
+| 3 — Distribution | 004 harness export | An exported bundle boots via `docker compose up` and completes a fixture run |
+| 4 — Product shell | 007 calendar, 012 copilot | No `Soon` tiles; copilot edits via validated ops |
+| Parallel | 002 memory + code index | No wave depends on it |
+
+Decisions locked while detailing (see the roadmap's table for the full list):
+**Q1** server actions + REST, no tRPC · **Q2** single-user v1 · **Q3** content hash ·
+**Q10** human-in-the-loop in v1 · **Q11** `template` summaries by default ·
+**Q12** budget `halt` by default · **Q14** OpenAI / OpenAI-compatible / Anthropic ·
+**Q15** `PLATFORM_SECRET` + AES-256-GCM · **Q19** default-deny tool egress ·
+**Q21** autosave draft + explicit publish · **Q23** no K8s in v1 · **Q24** PAT git auth ·
+**Q29** opt-in `memory.json` in exports. Still open: **Q4**, **Q17**, **Q28**, **Q30**.
 
 ---
 
