@@ -13,6 +13,10 @@ import {
   resolveWorkspacePath,
 } from "@/lib/code-index/path-guard";
 import { walkSourceFiles } from "@/lib/code-index/walker";
+import {
+  expandNeighborsFromCards,
+  type SymbolCard,
+} from "@/lib/code-index/neighbors";
 import type {
   CodeSymbolKind,
   IndexPathError,
@@ -103,6 +107,7 @@ export async function upsertSymbols(
   }
 
   revalidatePath("/code-index");
+  revalidatePath("/memory");
   return changed;
 }
 
@@ -184,6 +189,7 @@ export async function indexWorkspacePath(
   }
 
   revalidatePath("/code-index");
+  revalidatePath("/memory");
 
   return {
     ok: true,
@@ -276,6 +282,45 @@ export async function lookupIdentity(
     )
     .orderBy(desc(codeSymbols.indexedAt))
     .limit(limit);
+}
+
+function toSymbolCard(row: {
+  intent: string;
+  identity: string;
+  filePath: string;
+  startLine: number | null;
+  kind: string;
+}): SymbolCard {
+  return {
+    intent: row.intent,
+    identity: row.identity,
+    filePath: row.filePath,
+    startLine: row.startLine ?? undefined,
+    kind: row.kind,
+  };
+}
+
+/**
+ * Same-file symbols plus heuristic `references` (identity substring).
+ * Returns symbol cards only — never file bodies.
+ */
+export async function expandNeighbors(
+  projectId: number,
+  identity: string,
+  hops = 1
+): Promise<SymbolCard[]> {
+  const rows = await db
+    .select({
+      intent: codeSymbols.intent,
+      identity: codeSymbols.identity,
+      filePath: codeSymbols.filePath,
+      startLine: codeSymbols.startLine,
+      kind: codeSymbols.kind,
+    })
+    .from(codeSymbols)
+    .where(eq(codeSymbols.projectId, projectId));
+
+  return expandNeighborsFromCards(rows.map(toSymbolCard), identity, hops);
 }
 
 export async function getIndexStats(projectId: number): Promise<IndexStats> {

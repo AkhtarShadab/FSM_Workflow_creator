@@ -1,8 +1,40 @@
 "use server";
 
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { indexWorkspacePath } from "@/app/code-index/actions";
 import { db } from "@/db";
-import { memoryEdges, memoryNodes } from "@/db/schema";
+import { codeSymbols, memoryEdges, memoryNodes } from "@/db/schema";
+import {
+  buildMemoryBook,
+  type MemoryBook,
+} from "@/lib/memory/book-toc";
+import type { IndexPathError, IndexPathResult } from "@/lib/code-index/types";
+
+const SAMPLE_FIXTURE = "apps/web/fixtures/code-index-sample";
+
+export async function getMemoryBook(projectId: number): Promise<MemoryBook> {
+  const rows = await db
+    .select({
+      filePath: codeSymbols.filePath,
+      identity: codeSymbols.identity,
+      intent: codeSymbols.intent,
+      kind: codeSymbols.kind,
+      startLine: codeSymbols.startLine,
+    })
+    .from(codeSymbols)
+    .where(eq(codeSymbols.projectId, projectId));
+
+  return buildMemoryBook(rows);
+}
+
+export async function indexMemoryFixture(
+  projectId: number
+): Promise<IndexPathResult | IndexPathError> {
+  const result = await indexWorkspacePath(projectId, SAMPLE_FIXTURE);
+  revalidatePath("/memory");
+  return result;
+}
 
 export async function addMemoryNode(input: {
   label: string;
