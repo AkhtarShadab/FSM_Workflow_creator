@@ -31,6 +31,12 @@ importers:
       '@fsm/engine':
         specifier: workspace:*
         version: link:../../packages/fsm-engine
+      '@fsm/grpc-bridge':
+        specifier: workspace:*
+        version: link:../../packages/grpc-bridge
+      '@fsm/proto':
+        specifier: workspace:*
+        version: link:../../packages/proto
       '@libsql/client':
         specifier: ^0.17.4
         version: 0.17.4
