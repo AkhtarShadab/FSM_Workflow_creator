@@ -35,7 +35,7 @@ export function DslPreviewDialog({
   const { dsl, issues } = useMemo(() => {
     const canvas = { nodes: nodes ?? [], edges: edges ?? [] };
     return {
-      dsl: canvasToDsl(canvas, { name: projectName }),
+      dsl: canvasToDsl(canvas, { name: projectName, registry }),
       issues: lintCanvas(canvas, {
         registry,
         credentials: credentials.map((c) => ({

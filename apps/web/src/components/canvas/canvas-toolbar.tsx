@@ -58,7 +58,7 @@ const ICONS: Record<FSMStateType, typeof Play> = {
   END: Flag,
 };
 
-/** Grouped state palette (Flow / Work / Control) + signal-style picker */
+/** Grouped state palette (Flow / Work / Generative / Control / Custom) + signal picker */
 export function CanvasToolbar({
   projectId,
   projectName,
