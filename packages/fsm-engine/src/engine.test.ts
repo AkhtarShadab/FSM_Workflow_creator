@@ -3,6 +3,7 @@ import { parseSignal } from "./signals";
 import { resolveTransition } from "./resolver";
 import { runState, type Clock } from "./run-state";
 import { runSpawn, withInFlightProbe } from "./spawn-pool";
+import { runFsm } from "./runner";
 
 describe("parseSignal", () => {
   it("parses string grammar with payload", () => {
@@ -192,6 +193,112 @@ describe("runState", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("timeout");
     expect(r.attempts).toBe(2);
+  });
+});
+
+describe("runFsm STATE lifecycle", () => {
+  const clock: Clock = {
+    now: () => 0,
+    sleep: async () => undefined,
+  };
+
+  const linearStates = [
+    { id: "START", type: "START" },
+    { id: "S1", type: "SCRIPT", onErrorSignal: "::SCRIPT.ERROR" },
+    { id: "END", type: "END" },
+  ];
+
+  const linearEdges = [
+    { from: "START", on: "::STATE.SUCCESS", to: "S1" },
+    { from: "S1", on: "::SCRIPT.NEXT", to: "END" },
+    { from: "S1", on: "::SCRIPT.ERROR", to: "END" },
+  ];
+
+  it("emits STATE.ENTER and STATE.SUCCESS on success path", async () => {
+    const result = await runFsm({
+      states: linearStates,
+      edges: linearEdges,
+      clock,
+      executeState: async ({ state }) => {
+        if (state.id === "START") return "::STATE.SUCCESS";
+        return "::SCRIPT.NEXT";
+      },
+    });
+
+    expect(result.status).toBe("succeeded");
+    const messages = result.events.map((e) => e.message);
+    expect(messages).toContain("::STATE.ENTER|stateId=START|attempt=1");
+    expect(messages).toContain("::STATE.SUCCESS");
+    expect(messages).toContain("::STATE.ENTER|stateId=S1|attempt=1");
+    expect(result.events.some((e) => e.kind === "state.success")).toBe(true);
+    expect(result.events.some((e) => e.kind === "state.retry")).toBe(false);
+  });
+
+  it("emits STATE.RETRY then STATE.FAIL on exhausted timeout retries", async () => {
+    const result = await runFsm({
+      states: [
+        { id: "START", type: "START" },
+        {
+          id: "S1",
+          type: "SCRIPT",
+          onErrorSignal: "::SCRIPT.ERROR",
+          guardrails: { timeoutMs: 20, retryMax: 1, retryBackoffMs: 1 },
+        },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "START", on: "::STATE.SUCCESS", to: "S1" },
+        { from: "S1", on: "::SCRIPT.ERROR", to: "END" },
+      ],
+      clock,
+      executeState: async ({ state, signal }) => {
+        if (state.id === "START") return "::STATE.SUCCESS";
+        return new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      },
+    });
+
+    const retryEvents = result.events.filter((e) => e.kind === "state.retry");
+    const failEvents = result.events.filter((e) => e.kind === "state.fail");
+    expect(retryEvents).toHaveLength(1);
+    expect(retryEvents[0]?.message).toBe("::STATE.RETRY|attempt=1|reason=timeout");
+    expect(failEvents).toHaveLength(1);
+    expect(failEvents[0]?.message).toBe("::STATE.FAIL|reason=timeout");
+  });
+
+  it("self-loop iterations do not emit STATE.RETRY", async () => {
+    let s1Visits = 0;
+    const result = await runFsm({
+      states: [
+        { id: "START", type: "START" },
+        { id: "S1", type: "SCRIPT", onErrorSignal: "::SCRIPT.ERROR" },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "START", on: "::STATE.SUCCESS", to: "S1" },
+        {
+          from: "S1",
+          on: "::SCRIPT.LOOP",
+          to: "S1",
+          kind: "self-loop",
+          maxIterations: 2,
+        },
+        { from: "S1", on: "::SCRIPT.NEXT", to: "END" },
+      ],
+      clock,
+      executeState: async ({ state }) => {
+        if (state.id === "START") return "::STATE.SUCCESS";
+        s1Visits += 1;
+        return s1Visits < 2 ? "::SCRIPT.LOOP" : "::SCRIPT.NEXT";
+      },
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.events.filter((e) => e.kind === "state.retry")).toHaveLength(0);
+    expect(
+      result.events.filter((e) => e.kind === "state.enter" && e.stateId === "S1")
+    ).toHaveLength(2);
   });
 });
 

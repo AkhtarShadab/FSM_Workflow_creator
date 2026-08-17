@@ -1,7 +1,20 @@
 import { resolveTransition, type EngineEdge, type EngineMask } from "./resolver";
-import { runState, type Clock } from "./run-state";
+import {
+  defaultClock,
+  resolveRetryOn,
+  retryBackoffMs,
+  runState,
+  type Clock,
+} from "./run-state";
 import { runSpawn, type ChildEnvelope, type SpawnPoolConfig } from "./spawn-pool";
 import type { Emission } from "./signals";
+import type { RetryReason } from "./signals";
+import {
+  formatStateEnter,
+  formatStateFail,
+  formatStateRetry,
+  formatStateSuccess,
+} from "./signals";
 
 export interface EngineState {
   id: string;
@@ -14,6 +27,7 @@ export interface EngineState {
     timeoutMs: number;
     retryMax: number;
     retryBackoffMs: number;
+    retryOn?: RetryReason[];
   };
   mask?: EngineMask;
   spawn?: SpawnPoolConfig;
@@ -40,6 +54,31 @@ export type StateExecutor = (args: {
   signal: AbortSignal;
 }) => Promise<Emission>;
 
+export interface BeforeTransitionContext {
+  state: EngineState;
+  emission: Emission;
+  inputPayload: unknown;
+  attempts: number;
+  resolved: { to: string; signal: string; payload: unknown };
+}
+
+export interface BeforeTransitionResult {
+  ok: boolean;
+  reason?: RetryReason;
+  failureEmission?: Emission;
+  /** llm_verify onFail === "error_signal" skips remaining retries. */
+  skipRetry?: boolean;
+}
+
+async function pushEvent(
+  events: EngineEvent[],
+  event: EngineEvent,
+  onEvent?: (event: EngineEvent) => void | Promise<void>
+): Promise<void> {
+  events.push(event);
+  await onEvent?.(event);
+}
+
 /**
  * Walk START → … → END using tool-chained transitions.
  * SCRIPT/HTTP/VALIDATE/AI use the injected executor; SPAWN uses runSpawn.
@@ -54,6 +93,12 @@ export async function runFsm(args: {
   clock?: Clock;
   abortSignal?: AbortSignal;
   maxSteps?: number;
+  initialStateId?: string;
+  initialPayload?: unknown;
+  onEvent?: (event: EngineEvent) => void | Promise<void>;
+  onBeforeTransition?: (
+    ctx: BeforeTransitionContext
+  ) => Promise<BeforeTransitionResult>;
 }): Promise<RunFsmResult> {
   const byId = new Map(args.states.map((s) => [s.id, s]));
   const start = args.states.find((s) => s.type === "START");
@@ -62,8 +107,9 @@ export async function runFsm(args: {
   }
 
   const events: EngineEvent[] = [];
-  let currentId = start.id;
-  let payload: unknown = {};
+  const clock = args.clock ?? defaultClock;
+  let currentId = args.initialStateId ?? start.id;
+  let payload: unknown = args.initialPayload ?? {};
   let activeMask: EngineMask | null = null;
   let aggregate: ChildEnvelope[] | undefined;
   const maxSteps = args.maxSteps ?? 100;
@@ -80,11 +126,16 @@ export async function runFsm(args: {
       };
     }
 
-    events.push({
-      stateId: state.id,
-      kind: state.type,
-      message: `enter ${state.label ?? state.id}`,
-    });
+    await pushEvent(
+      events,
+      {
+        stateId: state.id,
+        kind: "state.enter",
+        message: formatStateEnter(state.id),
+        payload: { stateId: state.id, attempt: 1 },
+      },
+      args.onEvent
+    );
 
     if (state.type === "END") {
       return { status: "succeeded", events, finalStateId: state.id, aggregate };
@@ -95,6 +146,10 @@ export async function runFsm(args: {
     }
 
     let emission: Emission;
+    let resolved:
+      | { ok: true; to: string; signal: string; payload: unknown }
+      | { ok: false; message: string }
+      | null = null;
 
     if (state.type === "SPAWN" && state.spawn) {
       const childExec =
@@ -108,60 +163,221 @@ export async function runFsm(args: {
         signal: "::SPAWN.SUBAGENTS",
         payload: { envelopes },
       };
-      events.push({
-        stateId: state.id,
-        kind: "SPAWN",
-        message: `spawned ${envelopes.length} children`,
-        payload: envelopes,
-      });
-    } else {
-      const result = await runState(
+      await pushEvent(
+        events,
         {
-          id: state.id,
-          inputSchema: state.inputSchema,
-          outputSchema: state.outputSchema,
-          guardrails: state.guardrails ?? {
-            timeoutMs: 30_000,
-            retryMax: 0,
-            retryBackoffMs: 0,
-          },
-          onErrorSignal: state.onErrorSignal ?? "::SCRIPT.ERROR",
-          execute: ({ payload: p, signal }) =>
-            args.executeState({ state, payload: p, signal }),
+          stateId: state.id,
+          kind: "SPAWN",
+          message: `spawned ${envelopes.length} children`,
+          payload: envelopes,
         },
-        payload,
-        { clock: args.clock, abortSignal: args.abortSignal }
+        args.onEvent
       );
-
-      emission = result.emission;
-      events.push({
-        stateId: state.id,
-        kind: state.type,
-        message: result.ok
-          ? `ok attempts=${result.attempts}`
-          : `fail ${result.reason}`,
-        payload: emission,
+      resolved = resolveTransition({
+        fromStateId: state.id,
+        emission,
+        edges: args.edges,
+        mask: activeMask,
       });
+      if (resolved.ok && args.onBeforeTransition) {
+        const gate = await args.onBeforeTransition({
+          state,
+          emission,
+          inputPayload: payload,
+          attempts: 1,
+          resolved: {
+            to: resolved.to,
+            signal: resolved.signal,
+            payload: resolved.payload,
+          },
+        });
+        if (!gate.ok) {
+          emission = gate.failureEmission ?? {
+            signal: "::TRANSITION.VERIFY_FAIL",
+            payload: { reason: gate.reason ?? "verify_fail" },
+          };
+          await pushEvent(
+            events,
+            {
+              stateId: state.id,
+              kind: "state.fail",
+              message: formatStateFail(gate.reason ?? "verify_fail"),
+              payload: { reason: gate.reason ?? "verify_fail", emission },
+            },
+            args.onEvent
+          );
+          resolved = resolveTransition({
+            fromStateId: state.id,
+            emission,
+            edges: args.edges,
+            mask: activeMask,
+          });
+        }
+      }
+    } else {
+      const guardrails = state.guardrails ?? {
+        timeoutMs: 30_000,
+        retryMax: 0,
+        retryBackoffMs: 0,
+      };
+      const maxAttempts = Math.max(1, guardrails.retryMax + 1);
+      const retryOn = resolveRetryOn(guardrails);
+      let verifyRetryCount = 0;
 
-      if (!result.ok) {
-        // still try to follow error signal
+      stateLoop: while (true) {
+        const result = await runState(
+          {
+            id: state.id,
+            inputSchema: state.inputSchema,
+            outputSchema: state.outputSchema,
+            guardrails,
+            onErrorSignal: state.onErrorSignal ?? "::SCRIPT.ERROR",
+            execute: ({ payload: p, signal }) =>
+              args.executeState({ state, payload: p, signal }),
+          },
+          payload,
+          {
+            clock,
+            abortSignal: args.abortSignal,
+            onRetry: async ({ attempt, reason }) => {
+              await pushEvent(
+                events,
+                {
+                  stateId: state.id,
+                  kind: "state.retry",
+                  message: formatStateRetry(attempt, reason),
+                  payload: { attempt, reason, signal: formatStateRetry(attempt, reason) },
+                },
+                args.onEvent
+              );
+            },
+          }
+        );
+
+        emission = result.emission;
+
+        if (!result.ok) {
+          await pushEvent(
+            events,
+            {
+              stateId: state.id,
+              kind: "state.fail",
+              message: formatStateFail(result.reason),
+              payload: { reason: result.reason, emission },
+            },
+            args.onEvent
+          );
+          resolved = resolveTransition({
+            fromStateId: state.id,
+            emission,
+            edges: args.edges,
+            mask: activeMask,
+          });
+          break stateLoop;
+        }
+
+        await pushEvent(
+          events,
+          {
+            stateId: state.id,
+            kind: "state.success",
+            message: formatStateSuccess(),
+            payload: emission,
+          },
+          args.onEvent
+        );
+
+        const tentative = resolveTransition({
+          fromStateId: state.id,
+          emission,
+          edges: args.edges,
+          mask: activeMask,
+        });
+
+        if (!tentative.ok) {
+          resolved = tentative;
+          break stateLoop;
+        }
+
+        if (args.onBeforeTransition) {
+          const gate = await args.onBeforeTransition({
+            state,
+            emission,
+            inputPayload: payload,
+            attempts: result.attempts + verifyRetryCount,
+            resolved: {
+              to: tentative.to,
+              signal: tentative.signal,
+              payload: tentative.payload,
+            },
+          });
+
+          if (!gate.ok) {
+            const reason = gate.reason ?? "verify_fail";
+            verifyRetryCount += 1;
+            const attempt = result.attempts + verifyRetryCount;
+            if (
+              !gate.skipRetry &&
+              attempt < maxAttempts &&
+              retryOn.includes(reason)
+            ) {
+              await pushEvent(
+                events,
+                {
+                  stateId: state.id,
+                  kind: "state.retry",
+                  message: formatStateRetry(attempt, reason),
+                  payload: {
+                    attempt,
+                    reason,
+                    signal: formatStateRetry(attempt, reason),
+                  },
+                },
+                args.onEvent
+              );
+              await clock.sleep(
+                retryBackoffMs(guardrails, attempt),
+                args.abortSignal
+              );
+              continue stateLoop;
+            }
+
+            emission = gate.failureEmission ?? {
+              signal: "::TRANSITION.VERIFY_FAIL",
+              payload: { reason },
+            };
+            await pushEvent(
+              events,
+              {
+                stateId: state.id,
+                kind: "state.fail",
+                message: formatStateFail("verify_fail"),
+                payload: { reason: "verify_fail", emission },
+              },
+              args.onEvent
+            );
+            resolved = resolveTransition({
+              fromStateId: state.id,
+              emission,
+              edges: args.edges,
+              mask: activeMask,
+            });
+            break stateLoop;
+          }
+        }
+
+        resolved = tentative;
+        break stateLoop;
       }
     }
 
-    const resolved = resolveTransition({
-      fromStateId: state.id,
-      emission,
-      edges: args.edges,
-      mask: activeMask,
-    });
-
-    if (!resolved.ok) {
+    if (!resolved || !resolved.ok) {
       return {
         status: "failed",
         events,
         finalStateId: state.id,
         aggregate,
-        error: resolved.message,
+        error: resolved && !resolved.ok ? resolved.message : "transition failed",
       };
     }
 

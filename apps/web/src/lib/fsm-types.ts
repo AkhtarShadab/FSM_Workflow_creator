@@ -80,10 +80,19 @@ export interface HumanConfig {
 }
 
 /** Card 3 — guardrails & fallback logic (§10.3) */
+export type RetryReason =
+  | "timeout"
+  | "execute"
+  | "output_schema"
+  | "verify_fail"
+  | "tool_denied";
+
 export interface GuardrailConfig {
   timeoutMs: number;
   retryMax: number;
   retryBackoffMs: number;
+  /** Extra attempts after the first apply only for these reasons. */
+  retryOn?: RetryReason[];
 }
 
 export type AggregationStrategy = "waitAll" | "quorum" | "firstSuccess";
@@ -196,6 +205,12 @@ export interface StateNodeData extends Record<string, unknown> {
   spawn: SpawnConfig;
   aggregate: AggregateConfig;
   systemFunction: SystemFunctionConfig;
+  /** 014 R2 — default `{ kind: "signal" }` when omitted. */
+  successCondition?: { kind: string; [key: string]: unknown };
+  /** 014 R4 — default inherit. */
+  toolAccess?: { mode: "inherit" | "allowlist" | "deny_all"; allow: string[] };
+  /** 014 R5 — opt-in; default false. */
+  retainContext?: boolean;
 }
 
 /** Topology kind for edges (FeatureShipping 001 §10.4–10.5) */

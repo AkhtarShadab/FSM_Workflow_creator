@@ -1,6 +1,7 @@
 import type { HttpConfig, HttpMethod, StateNodeData } from "@/lib/fsm-types";
 import { validatePublicHttpUrl } from "@/lib/url-guard";
 import type { Executor, ExecutorContext } from "./types";
+import { deniedEmission, ToolGrantError } from "@/lib/tool-grants";
 
 export interface HttpExecutorDeps {
   fetch?: typeof fetch;
@@ -112,6 +113,18 @@ function parseResponseBody(text: string): unknown {
   }
 }
 
+/** E2E fixture: `https://example.com/__fsm_mock_http_retry` → 500 then 200. */
+export const MOCK_HTTP_RETRY_PATH = "__fsm_mock_http_retry";
+
+function mockHttpRetryResponse(url: string, attempt: number): Response | null {
+  if (process.env.FSM_MOCK_PROVIDER !== "1") return null;
+  if (!url.includes(MOCK_HTTP_RETRY_PATH)) return null;
+  if (attempt === 1) {
+    return new Response("upstream error", { status: 500 });
+  }
+  return new Response(JSON.stringify({ ok: true }), { status: 200 });
+}
+
 function linkTimeout(
   parent: AbortSignal,
   timeoutMs: number
@@ -151,6 +164,17 @@ export function createHttpExecutor(deps: HttpExecutorDeps = {}): Executor {
   const sleep = deps.sleep ?? DEFAULT_SLEEP;
 
   return async function executeHttp(ctx: ExecutorContext) {
+    if (ctx.tools) {
+      try {
+        ctx.tools.requireGrant("http");
+      } catch (e) {
+        if (e instanceof ToolGrantError) {
+          return deniedEmission(e.toolName, e.reason);
+        }
+        throw e;
+      }
+    }
+
     const cfg = httpConfigFromNode(ctx.node?.data);
     const retryMax = ctx.state.guardrails?.retryMax ?? 0;
     const backoff = ctx.state.guardrails?.retryBackoffMs ?? 0;
@@ -205,13 +229,29 @@ export function createHttpExecutor(deps: HttpExecutorDeps = {}): Executor {
           init.body = bodyRaw;
         }
 
-        const res = await doFetch(url, init);
+        const res =
+          mockHttpRetryResponse(url, attempt) ??
+          (await doFetch(url, init));
         linked.cleanup();
 
         const body = await readBody(res);
         const signal = mapHttpStatusToSignal(res.status, cfg.successSignals);
 
         if (signal === "::HTTP.ERROR") {
+          if (res.status >= 500 && attempt < maxAttempts) {
+            await ctx.emit({
+              stateId: ctx.state.id,
+              kind: "state.retry",
+              payload: {
+                attempt,
+                reason: "execute",
+                code: "HTTP_STATUS",
+                status: res.status,
+              },
+            });
+            if (backoff > 0) await sleep(backoff, ctx.signal);
+            continue;
+          }
           await ctx.emit({
             stateId: ctx.state.id,
             kind: "state.error",

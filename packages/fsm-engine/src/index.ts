@@ -1,4 +1,15 @@
-export { parseSignal, type Emission, type ParsedSignal, type StructuredEmission } from "./signals";
+export {
+  parseSignal,
+  formatStateEnter,
+  formatStateRetry,
+  formatStateSuccess,
+  formatStateFail,
+  DEFAULT_RETRY_ON,
+  type Emission,
+  type ParsedSignal,
+  type StructuredEmission,
+  type RetryReason,
+} from "./signals";
 export {
   resolveTransition,
   type EngineEdge,
@@ -23,4 +34,12 @@ export {
   type ChildExecutor,
   type ChildContext,
 } from "./spawn-pool";
-export { runFsm, type EngineState, type EngineEvent, type RunFsmResult, type StateExecutor } from "./runner";
+export {
+  runFsm,
+  type BeforeTransitionContext,
+  type BeforeTransitionResult,
+  type EngineState,
+  type EngineEvent,
+  type RunFsmResult,
+  type StateExecutor,
+} from "./runner";

@@ -26,6 +26,8 @@ const SSE_KINDS = [
   "human.resolved",
   "run.complete",
   "run.failed",
+  "run.cursor",
+  "run.resume_without_cursor",
 ] as const;
 
 const MOCK_RUNS = [
@@ -82,11 +84,17 @@ function formatLiveEvent(ev: SseFrame, kind: string): string {
       return bits.join(" · ");
     }
     case "state.retry":
-      return `retry attempt=${String(p.attempt ?? "")} ${String(p.code ?? "")}`.trim();
+      return `retry attempt=${String(p.attempt ?? "")} reason=${String(p.reason ?? p.code ?? "")}`.trim();
     case "state.error":
       return `error ${String(p.code ?? p.message ?? p.error ?? "")}`.trim();
     case "state.transition":
       return `→ ${String(p.signal ?? "")}`;
+    case "run.cursor": {
+      const last = String(p.lastCompletedStateId ?? "");
+      return last ? `cursor last completed: ${last}` : "cursor updated";
+    }
+    case "run.resume_without_cursor":
+      return "resume without cursor (restarting from START)";
     case "human.awaiting":
       return `awaiting human task ${String(p.taskId ?? "")}`.trim();
     case "human.resolved":
@@ -96,6 +104,9 @@ function formatLiveEvent(ev: SseFrame, kind: string): string {
     case "run.failed":
       return `run failed ${String(p.code ?? p.error ?? "")}`.trim();
     default:
+      if (kind.includes("TOOL_DENIED") || String(p.signal ?? "").includes("TOOL_DENIED")) {
+        return `tool denied ${String(p.toolName ?? "")}`.trim();
+      }
       return kind;
   }
 }
@@ -117,6 +128,7 @@ function StatusBadge({ status }: { status: string }) {
     running: "border-sky-400/40 bg-sky-400/10 text-sky-300",
     cancelled: "border-amber-400/40 bg-amber-400/10 text-amber-300",
     awaiting_human: "border-amber-400/40 bg-amber-400/10 text-amber-200",
+    interrupted: "border-violet-400/40 bg-violet-400/10 text-violet-200",
   };
   return (
     <Badge variant="outline" className={cn("text-[10px]", styles[status])}>
@@ -142,6 +154,7 @@ export function RunsView({
   const canvas = useCanvasStore((s) => s.canvases[projectId]);
   const [busy, setBusy] = useState(false);
   const [lastStatus, setLastStatus] = useState<string | null>(null);
+  const [lastCompleted, setLastCompleted] = useState<string | null>(null);
   const [pendingHuman, setPendingHuman] = useState<{
     taskId: number;
     prompt: string;
@@ -149,6 +162,12 @@ export function RunsView({
 
   const totalIn = events.reduce((sum, e) => sum + (e.tokensIn ?? 0), 0);
   const totalOut = events.reduce((sum, e) => sum + (e.tokensOut ?? 0), 0);
+  const toolDenied = events.some(
+    (e) =>
+      e.kind === "tool.denied" ||
+      e.kind.includes("TOOL_DENIED") ||
+      /tool denied|TOOL_DENIED/i.test(e.message)
+  );
 
   const closeStream = useCallback(() => {
     sourceRef.current?.close();
@@ -182,6 +201,11 @@ export function RunsView({
         if (eventKind === "human.resolved") {
           setPendingHuman(null);
         }
+        if (eventKind === "run.cursor") {
+          const p = asRecord(parsed.payload);
+          const last = p.lastCompletedStateId;
+          if (typeof last === "string" && last) setLastCompleted(last);
+        }
         const status = statusFromFrame(eventKind, parsed.payload);
         if (status) {
           setLastStatus(status);
@@ -202,6 +226,16 @@ export function RunsView({
           tokensOut: parsed.tokensOut ?? undefined,
           latencyMs: parsed.latencyMs ?? undefined,
         });
+        if (
+          eventKind === "state.output" &&
+          asRecord(parsed.payload).signal === "::AI.TOOL_DENIED"
+        ) {
+          pushEvent({
+            stateId: parsed.stateId ?? "",
+            kind: "tool.denied",
+            message: `tool denied ${String(asRecord(asRecord(parsed.payload).payload).toolName ?? "")}`,
+          });
+        }
       };
       for (const kind of SSE_KINDS) {
         es.addEventListener(kind, (ev) =>
@@ -246,6 +280,28 @@ export function RunsView({
         message: err instanceof Error ? err.message : "Run failed",
       });
       stop();
+      setBusy(false);
+    }
+  };
+
+  const resumeRun = async () => {
+    const id = useRunStore.getState().runId;
+    if (id == null) return;
+    setBusy(true);
+    setLastStatus("running");
+    try {
+      const res = await fetch(`/api/runs/${id}/resume`, { method: "POST" });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        throw new Error(data.error ?? "Resume failed");
+      }
+      attachStream(id);
+    } catch (err) {
+      pushEvent({
+        stateId: "engine",
+        kind: "run.failed",
+        message: err instanceof Error ? err.message : "Resume failed",
+      });
       setBusy(false);
     }
   };
@@ -331,9 +387,34 @@ export function RunsView({
                 SSE /api/runs/[id]/stream
                 {runId != null ? ` · run ${runId}` : ""}
                 {lastStatus ? ` · last: ${lastStatus}` : ""}
+                {lastCompleted ? (
+                  <span data-testid="last-completed">
+                    {" "}
+                    · last completed: {lastCompleted}
+                  </span>
+                ) : null}
               </p>
+              {toolDenied ? (
+                <Badge
+                  variant="outline"
+                  data-testid="tool-denied-chip"
+                  className="mt-1 border-red-400/40 bg-red-400/10 text-[10px] text-red-200"
+                >
+                  tool denied
+                </Badge>
+              ) : null}
             </div>
-            {busy || live ? (
+            {lastStatus === "interrupted" && runId != null && !busy ? (
+              <Button
+                size="sm"
+                data-testid="run-resume"
+                onClick={resumeRun}
+                className="gap-2 bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
+              >
+                <Play className="h-3.5 w-3.5" />
+                Resume
+              </Button>
+            ) : busy || live ? (
               <Button
                 size="sm"
                 data-testid="run-cancel"
@@ -447,6 +528,22 @@ export function RunsView({
                     <span className="flex-1 truncate font-mono text-xs text-foreground/80">
                       {e.message}
                     </span>
+                    {e.kind === "state.retry" && (
+                      <Badge
+                        variant="outline"
+                        className="text-[9px] border-amber-400/30 text-amber-200"
+                      >
+                        retry
+                      </Badge>
+                    )}
+                    {e.kind === "tool.denied" && (
+                      <Badge
+                        variant="outline"
+                        className="text-[9px] border-red-400/30 text-red-200"
+                      >
+                        tool denied
+                      </Badge>
+                    )}
                     {e.latencyMs != null && (
                       <span className="font-mono text-[10px] text-muted-foreground">
                         {e.latencyMs}ms

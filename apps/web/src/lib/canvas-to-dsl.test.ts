@@ -246,3 +246,40 @@ describe("lintCanvas C1 (severity)", () => {
     ).toBe(true);
   });
 });
+
+describe("canvasToDsl 014 run-contract fields", () => {
+  it("persists successCondition, toolAccess, retainContext, and retryOn", () => {
+    const canvas: CanvasData = {
+      nodes: [
+        node("S0", "START"),
+        node("S1", "SCRIPT", {
+          successCondition: { kind: "signal" },
+          toolAccess: { mode: "allowlist", allow: ["script"] },
+          retainContext: true,
+          guardrails: {
+            timeoutMs: 5000,
+            retryMax: 1,
+            retryBackoffMs: 0,
+            retryOn: ["timeout", "verify_fail"],
+          },
+        }),
+        node("END", "END"),
+      ],
+      edges: [
+        edge("e1", "S0", "S1", "::SCRIPT.NEXT"),
+        edge("e2", "S1", "END", "::SCRIPT.NEXT"),
+      ],
+    };
+    const dsl = canvasToDsl(canvas);
+    const s1 = dsl.states.find((s: { id: string }) => s.id === "S1") as {
+      successCondition?: { kind: string };
+      toolAccess?: { mode: string; allow: string[] };
+      retainContext?: boolean;
+      guardrails?: { retryOn?: string[] };
+    };
+    expect(s1.successCondition).toEqual({ kind: "signal" });
+    expect(s1.toolAccess).toEqual({ mode: "allowlist", allow: ["script"] });
+    expect(s1.retainContext).toBe(true);
+    expect(s1.guardrails?.retryOn).toEqual(["timeout", "verify_fail"]);
+  });
+});
