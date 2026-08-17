@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Typecheck & unit tests
+  static:
+    name: Static
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -37,6 +37,52 @@ jobs:
       - name: Typecheck web
         run: pnpm --filter web exec tsc --noEmit
 
+      - name: Lint web
+        run: pnpm --filter web lint
+
+      # drizzle-kit 0.31 has no `generate --check`. Generate into a temp copy of
+      # the migrations folder and fail if a new SQL file would be produced.
+      - name: Check Drizzle migrations are current
+        working-directory: apps/web
+        run: |
+          tmp="$(mktemp -d ./tmp-drizzle-XXXXXX)"
+          trap 'rm -rf "$tmp"' EXIT
+          cp -a src/db/migrations/. "$tmp/"
+          before="$(find "$tmp" -name '*.sql' | wc -l)"
+          pnpm exec drizzle-kit generate --schema ./src/db/schema.ts --dialect turso --out "$tmp"
+          after="$(find "$tmp" -name '*.sql' | wc -l)"
+          if [ "$after" -ne "$before" ]; then
+            echo "Schema drift: drizzle-kit generate would add a new SQL migration. Commit it."
+            echo "Committed SQL files:"
+            find src/db/migrations -name '*.sql' -printf '%f\n' | sort
+            echo "Generated SQL files:"
+            find "$tmp" -name '*.sql' -printf '%f\n' | sort
+            exit 1
+          fi
+
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Unit tests (web)
         run: pnpm --filter web test
 
@@ -44,11 +90,16 @@ jobs:
         if: hashFiles('packages/fsm-engine/package.json') != ''
         run: pnpm --filter @fsm/engine test
 
-      # Lint is intentionally non-blocking until eslint noise is cleaned up.
-      - name: Lint web (allow failure)
-        continue-on-error: true
-        run: pnpm --filter web lint
+      - name: Unit tests (schema)
+        if: hashFiles('packages/schema/package.json') != ''
+        run: pnpm --filter @fsm/schema test
 
-      # Playwright E2E is optional in CI for now (needs browsers + app server).
-      # - name: Playwright
-      #   run: pnpm --filter web test:e2e
+      - name: Unit tests (export-engine)
+        if: hashFiles('packages/export-engine/package.json') != ''
+        run: pnpm --filter @fsm/export-engine test
+
+      - name: Unit tests (grpc-bridge)
+        if: hashFiles('packages/grpc-bridge/package.json') != ''
+        run: pnpm --filter @fsm/grpc-bridge test
+
+      # Playwright E2E is CI3 — do not add it here.
