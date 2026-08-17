@@ -1,21 +1,30 @@
-export { parseSignal, type Emission, type ParsedSignal, type StructuredEmission } from "./signals";
+export {
+  parseSignal,
+  formatStateEnter,
+  formatStateRetry,
+  formatStateSuccess,
+  formatStateFail,
+  DEFAULT_RETRY_ON,
+  type Emission,
+  type ParsedSignal,
+  type StructuredEmission,
+  type RetryReason,
+} from "./signals";
 export {
   resolveTransition,
   type EngineEdge,
   type EngineMask,
   type ResolveResult,
 } from "./resolver";
-export {
-  isStateDisabledByMask,
-  swapToolSchemas,
-  type ToolSchema,
-  type MaskSwapResult,
-} from "./mask";
+export { isStateDisabledByMask } from "./mask";
 export {
   runState,
   defaultClock,
+  resolveRetryOn,
+  retryBackoffMs,
   type RunStateSpec,
   type RunStateResult,
+  type RunStateOptions,
   type Clock,
   type Guardrails,
 } from "./run-state";

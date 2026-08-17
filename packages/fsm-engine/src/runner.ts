@@ -2,6 +2,13 @@ import { resolveTransition, type EngineEdge, type EngineMask } from "./resolver"
 import { runState, type Clock } from "./run-state";
 import { runSpawn, type ChildEnvelope, type SpawnPoolConfig } from "./spawn-pool";
 import type { Emission } from "./signals";
+import type { RetryReason } from "./signals";
+import {
+  formatStateEnter,
+  formatStateFail,
+  formatStateRetry,
+  formatStateSuccess,
+} from "./signals";
 
 export interface EngineState {
   id: string;
@@ -14,6 +21,7 @@ export interface EngineState {
     timeoutMs: number;
     retryMax: number;
     retryBackoffMs: number;
+    retryOn?: RetryReason[];
   };
   mask?: EngineMask;
   spawn?: SpawnPoolConfig;
@@ -82,8 +90,9 @@ export async function runFsm(args: {
 
     events.push({
       stateId: state.id,
-      kind: state.type,
-      message: `enter ${state.label ?? state.id}`,
+      kind: "state.enter",
+      message: formatStateEnter(state.id),
+      payload: { stateId: state.id, attempt: 1 },
     });
 
     if (state.type === "END") {
@@ -130,21 +139,36 @@ export async function runFsm(args: {
             args.executeState({ state, payload: p, signal }),
         },
         payload,
-        { clock: args.clock, abortSignal: args.abortSignal }
+        {
+          clock: args.clock,
+          abortSignal: args.abortSignal,
+          onRetry: ({ attempt, reason }) => {
+            events.push({
+              stateId: state.id,
+              kind: "state.retry",
+              message: formatStateRetry(attempt, reason),
+              payload: { attempt, reason },
+            });
+          },
+        }
       );
 
       emission = result.emission;
-      events.push({
-        stateId: state.id,
-        kind: state.type,
-        message: result.ok
-          ? `ok attempts=${result.attempts}`
-          : `fail ${result.reason}`,
-        payload: emission,
-      });
 
-      if (!result.ok) {
-        // still try to follow error signal
+      if (result.ok) {
+        events.push({
+          stateId: state.id,
+          kind: "state.success",
+          message: formatStateSuccess(),
+          payload: emission,
+        });
+      } else {
+        events.push({
+          stateId: state.id,
+          kind: "state.fail",
+          message: formatStateFail(result.reason),
+          payload: { reason: result.reason, emission },
+        });
       }
     }
 
