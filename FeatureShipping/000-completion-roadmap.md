@@ -76,6 +76,7 @@ Use this table to know when a *capability* is online. Do **not** use it as a sta
 | **3 — Distribution** | [004](004-harness-export.md) | Exported bundle boots via `docker compose up` and completes a fixture FSM |
 | **4 — Product shell** | [007](007-calendar.md), [012](012-copilot.md) | No `cta="Soon"` tiles remain; copilot edits the canvas through validated ops |
 | **Anytime** | [002](002-memory-and-code-index.md) | Already **Detailed** — no wave depends on it; M5 TOC feeds 011 |
+| **5 — FSM contract** | [013](013-state-signal-catalog.md), [014](014-run-contract.md) | Palette is segregated; custom states/signals have a procedure; runs retry, verify, resume, deny tools, and drop per-state memory |
 
 ## 4. Definition of done (v1)
 
@@ -89,7 +90,7 @@ The README makes five promises. v1 is complete when each is demonstrably real, c
 | Visual authoring | Copilot mutates the canvas via Zod-validated ops; no stub mode | 012 |
 | Exportable harnesses | `docker compose up` on an exported bundle completes a fixture run | 004 |
 
-Plus: zero `Soon` tiles (007, 008), credentials encrypted at rest (005), and CI enforcing lint + unit + E2E (006).
+Plus: zero `Soon` tiles (007, 008), credentials encrypted at rest (005), CI enforcing lint + unit + E2E (006), segregated FSM catalog with a signal/state registration procedure (013), and a run contract for retry / verify / resume / tool grants / per-state memory (014).
 
 ## 5. Test bar (applies to every doc)
 
@@ -120,8 +121,19 @@ Resolving these unblocks the docs below; each is recorded again in the owning do
 | Q24 | Git export auth | **User PAT**, stored through the 005 envelope | 004 |
 | Q29 | Memory in exports | **Opt-in** `memory.json` snapshot; off by default | 004 |
 | Q23 | K8s/Helm targets | **v2** — ZIP and git only in v1 | 004 |
+| Q5 | Custom `::MYAPP.*` signals | **Allowed**. Reserved namespaces (`SCRIPT` `HTTP` `VALIDATE` `AI` `EXTERNAL_AI` `HUMAN` `SPAWN` `SYSTEM` `STATE` `TRANSITION`) cannot be registered. Exact-string uniqueness. | 013 |
+| Q31 | Palette groups | **Five**: Flow, Work, Generative, Control, Custom. Work is deterministic only. | 013 |
+| Q32 | New built-in types in this wave | **None**. Custom types reuse SCRIPT/HTTP/AI/`none` executors. `ERR` is `END` with `terminal: "error"`. | 013 |
+| Q33 | START default signal | **`::STATE.SUCCESS`** (legacy `::SCRIPT.NEXT` edges still run; lint warns) | 013 |
+| Q34 | Lifecycle edges | Engine always records `::STATE.*` / `::TRANSITION.*` as events. Authoring them as edges is optional; `ENTER`/`EXIT`/`RETRY` lint-warn. | 013 |
+| Q35 | Denied tool vs AI | **Stop the AI turn**. Emit `::AI.TOOL_DENIED`. Do not continue chatting after a deny. | 014 |
+| Q36 | Resume unit | **Last completed state**. Re-enter `nextStateId` with that state's output payload only. | 014 |
+| Q37 | Judge model | **Separate BYOK credential/model** from the worker. Fail closed on judge error. Default success condition is `signal` (no extra call). | 014 |
+| Q38 | Retry vs self-loop | **Independent**. `retryMax` is executor attempts; `maxIterations` is taken self-loop edges. | 014 |
+| Q39 | Per-state memory | **Drop history after success** (default). `retainContext: true` opt-in. SYS_FUNC dehydrate still wins at cluster boundaries. | 014 |
+| Q40 | Schema for cursor | **No new tables**. Cursor is `run_events.kind = "run.cursor"`. | 014 |
 
-Still open (do not block Wave 0–1): Q4 meta-cognitive auto-apply, Q17 mixed tool languages, Q28 Turso tier, Q30 script-template sharing.
+Still open (do not block Wave 0–5): Q4 meta-cognitive auto-apply, Q17 mixed tool languages, Q28 Turso tier, Q30 script-template sharing.
 
 ## 7. Working agreement
 
@@ -241,7 +253,10 @@ SB0
  ├─ 006 CI2a → CI2b → CI3
  ├─ 010 G1 → G2 → G4 → G5
  ├─ 004 X1 → X2 (needs 009 P3) → X3 → X4 (needs 010 G2)
- └─ 002 M1 → M2 → M3 → …
+ ├─ 002 M1 → M2 → M3 → …
+ └─ 013 F1 → F2
+      └─ 014 libs ∥ 014 R1 engine
+           └─ 014 supervisor wire (owns run-supervisor.ts; rebase onto E3+T2)
 ```
 
 If two PRs collide, **the greenfield / test-only PR rebases**. Persistence and runtime PRs keep the contested file.
@@ -255,3 +270,14 @@ Each agent gets exactly one phase. Prefer the project subagents in [`.cursor/age
 Copy-paste if invoking `ship-feature` directly:
 
 > Implement FeatureShipping **&lt;NNN&gt;** phase **&lt;id&gt;** with `ship-feature`. Stay inside that phase's file map. Do not edit `schema.ts` (owned by SB0). Do not edit files listed under another lane in `000-completion-roadmap.md` §8.2. Follow with `test-feature` on the same branch.
+
+### 8.9 Wave 5 kickoff (013 / 014)
+
+After 001 authoring exists (true on `master`). Do **not** wait for 003 E4.
+
+1. `ship-feature` **013 F1** then **F2** (palette, kits, registry procedure). Files: `fsm-types.ts`, `registry.ts`, inspector. No supervisor.
+2. Parallel with F2: **014 libs** — new files only (`verify-success.ts`, `tool-grants.ts`, `run-context.ts`, `run-cursor.ts`) + Vitest.
+3. Parallel: **014 R1** engine retry/lifecycle in `packages/fsm-engine` (no supervisor).
+4. After 013 F1 types exist **and** a single Lane R agent holds `run-supervisor.ts`: wire R1–R5 in one PR (or stacked PRs on that branch).
+
+Playwright for 014 needs `FSM_MOCK_PROVIDER=1` and live executors (003 E1+). Authoring E2E for 013 does not.
