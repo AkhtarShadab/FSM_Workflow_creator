@@ -17,6 +17,14 @@ export default defineConfig({
         __dirname,
         "../../packages/byok-gateway/src/index.ts"
       ),
+      "@fsm/grpc-bridge": path.resolve(
+        __dirname,
+        "../../packages/grpc-bridge/src/index.ts"
+      ),
+      "@fsm/proto": path.resolve(
+        __dirname,
+        "../../packages/proto/src/index.ts"
+      ),
     },
   },
 });

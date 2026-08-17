@@ -4,6 +4,7 @@ import type { StateNodeData } from "@/lib/fsm-types";
 export type RunEventKind =
   | "state.start"
   | "state.token"
+  | "state.log"
   | "state.output"
   | "state.retry"
   | "state.error"

@@ -3,6 +3,11 @@ import { fsmDefinitions, runEvents, runs } from "@/db/schema";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
 import type { CanvasData, StateNodeData } from "@/lib/fsm-types";
 import { getExecutor } from "@/lib/executors/registry";
+import {
+  clearPreparedToolRuntime,
+  collectScriptTools,
+  prepareToolRuntime,
+} from "@/lib/executors/script";
 import type {
   Executor,
   ExecutorContext,
@@ -352,6 +357,31 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
 
     const done = (async () => {
       try {
+        const scriptTools = collectScriptTools(
+          [...nodesById.values()],
+          states
+        );
+        const prepared = await prepareToolRuntime({
+          runId,
+          tools: scriptTools,
+        });
+        if (prepared.status === "rejected") {
+          await store.updateRun(runId, {
+            status: "failed",
+            endedAt: new Date(),
+          });
+          await emit(runId, {
+            stateId: prepared.stateId ?? "",
+            kind: "run.failed",
+            payload: {
+              code: prepared.code,
+              error: prepared.message,
+              toolName: prepared.toolName ?? null,
+            },
+          });
+          return;
+        }
+
         const result = await runFsm({
           states,
           edges,
@@ -419,6 +449,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
           },
         });
       } finally {
+        clearPreparedToolRuntime(runId);
         registry.delete(runId);
       }
     })();

@@ -1,20 +1,13 @@
 import type { FSMStateType } from "@/lib/fsm-types";
 import { executeAi } from "./ai";
+import { executeScript } from "./script";
 import type { Executor } from "./types";
 
 /**
- * SCRIPT: success stub in mock mode; otherwise TOOL_RUNTIME_UNAVAILABLE until 010 G3.
  * HTTP / VALIDATE: success stubs until E2. HUMAN auto-approves until E3.
+ * SCRIPT: grpc-bridge via 010 G3 (`script.ts`).
  */
 export const executeStart: Executor = async () => "::SCRIPT.NEXT";
-
-export const executeScript: Executor = async () => {
-  if (process.env.FSM_MOCK_PROVIDER === "1") return "::SCRIPT.NEXT";
-  return {
-    signal: "::SCRIPT.ERROR",
-    payload: { code: "TOOL_RUNTIME_UNAVAILABLE" },
-  };
-};
 
 export const executeHttp: Executor = async () => "::HTTP.NEXT";
 
