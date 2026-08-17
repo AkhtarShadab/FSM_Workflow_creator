@@ -1,9 +1,9 @@
 # 002 — Memory & Code Index
 
-> Status: **Detailed**  
+> Status: **Detailed** (M1 shipped on `cursor/code-index-m1-1e9b`; Book/RAG+CAG graph is B1–B3 below)  
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §5.3  
-> Code today: [`apps/web/src/db/schema.ts`](../apps/web/src/db/schema.ts) (`memory_nodes` / `memory_edges`), [`apps/web/src/components/memory/memory-view.tsx`](../apps/web/src/components/memory/memory-view.tsx)  
-> Implement with: **ship-feature** on Composer/Grok · Detail updates: **detail-feature** on high-end models
+> Code today: [`memory_nodes` / `memory_edges`](../apps/web/src/db/schema.ts), [`memory-view.tsx`](../apps/web/src/components/memory/memory-view.tsx), M1 indexer [`apps/web/src/lib/code-index/`](../apps/web/src/lib/code-index/)  
+> Implement with: **ship-feature** then **test-feature** on **Grok 4.6** · Detail updates: **detail-feature**
 
 ---
 
@@ -227,10 +227,16 @@ Top-level tabs: **Graph** | **Code Index**
 | M2 | Memory studio tabs + Code Index shell | Composer/Grok |
 | M3 | TS indexer MVP + wizard/progress | Composer/Grok |
 | M4 | Intent enrichment + staleness | Composer/Grok |
-| M5 | AI retrieval tools + State 0 TOC | Composer/Grok |
-| M6 | Virtualization + E2E polish | Composer/Grok |
+| M5 | AI retrieval tools + State 0 TOC | **Superseded by B1–B3** |
+| M6 | Virtualization + E2E polish | After B2 if lists stay |
 
-Detail/revise this doc with **detail-feature** (high-end) only.
+| Phase | Scope | Model |
+|-------|--------|--------|
+| **B1** | CAG TOC builder + file summaries from `code_symbols` (intent/identity only). Pure lib. | Grok 4.6 |
+| **B2** | Graphical Memory studio: facts graph **and** code-book graph on `/memory`. | Grok 4.6 |
+| **B3** | RAG retrieve-by-intent / lookup-identity + `expandNeighbors`; State 0 TOC string (≤400 tokens). | Grok 4.6 |
+
+Detail/revise this doc with **detail-feature** (high-end) only. B* phases use **Grok 4.6** subagents.
 
 ---
 
@@ -243,3 +249,126 @@ Detail/revise this doc with **detail-feature** (high-end) only.
 - [ ] Search by intent substring and by path prefix returns expected symbols (Vitest).
 - [ ] Playwright: open Memory → Code Index → run index on fixture repo → see ≥1 symbol with three fields.
 - [ ] AI retrieval helper returns bounded card payloads (max k, max chars).
+- [ ] TOC (CAG) is a graph of dir → file → symbol keyed by **intent + identity**, never file bodies.
+- [ ] RAG `searchByIntent` / `lookupIdentity` / `expandNeighbors` return symbol cards only.
+- [ ] `/memory` shows the code book as React Flow (not table-only); click a node to open intent/identity/location.
+- [ ] State 0 can consume `formatTocForPrompt(toc)` under 400 tokens.
+
+---
+
+## 10. Book memory — graph + RAG + CAG (B1–B3)
+
+Treat project memory as a **book** whose only addressable pages are **intent** (what) and **identity** (who/signature). The UI and the runtime both navigate a **graph**, not a blob dump.
+
+### 10.1 Metaphor
+
+```mermaid
+flowchart TB
+  subgraph cag [CAG - always in the book]
+    TOC["Table of Contents graph"]
+    Sum["Per-file / per-module summary"]
+  end
+  subgraph rag [RAG - fetch a page]
+    Intent["searchByIntent"]
+    Ident["lookupIdentity"]
+    Neigh["expandNeighbors"]
+  end
+  TOC --> Intent
+  TOC --> Ident
+  Intent --> Card["Symbol card: intent + identity + path:line"]
+  Ident --> Card
+  Neigh --> Card
+  Card -.->|"never"| Body["Full file body"]
+```
+
+| Layer | Name | What is stored | What the model sees |
+|-------|------|----------------|---------------------|
+| **CAG** | Table of contents | Directory → file → symbol **graph** plus a one-line **code summary** per file (derived from that file's symbol intents, no LLM required) | The TOC string / subgraph, hard-capped (400 tokens for State 0, 2k for the studio overview) |
+| **RAG** | Page retrieval | `code_symbols.intent` + `identity` + location (+ optional `chunkRef`) | A **card** (`k ≤ 8`, `maxChars ≤ 800` per card). File bodies are not the retrieval key. |
+| **Graph knowledge** | Sticky facts | Existing `memory_nodes` / `memory_edges` | Top-N facts already in State 0 |
+
+**Identity mapping:** `identity` is the stable key (`connect(host: string, port: number): Socket`). Lookups and graph node ids for symbols use `projectId + filePath + identity`.
+
+**Intent mapping:** `intent` is the natural-language purpose. Search is substring / token overlap on intent (embeddings stay `embedding_ref` nullable — M4).
+
+### 10.2 Graphical representation (required)
+
+Code memory is **not** table-only. `/memory` has two graph layers on the same React Flow canvas (toggle or combined):
+
+| Node | Source | Label | Data |
+|------|--------|-------|------|
+| Directory | path segments | folder name | `{ kind: "dir", path }` |
+| File | unique `filePath` | file name | `{ kind: "file", path, summary }` |
+| Symbol | `code_symbols` row | intent (short) | `{ kind: "symbol", intent, identity, filePath, startLine }` |
+| Fact / artifact / … | `memory_nodes` | existing sticky | unchanged |
+
+Edges:
+
+| Relation | From → to |
+|----------|-----------|
+| `contains` | dir → dir, dir → file, file → symbol |
+| `references` | symbol → symbol when identity of A appears in B's intent/identity text (heuristic v1; import graph later) |
+| existing fact relations | unchanged |
+
+Clicking a symbol node opens the detail pane (intent, identity, location). Double-click file node expands/collapses children.
+
+Layout: deterministic layered layout (dir columns left → files → symbols). No random seeds.
+
+### 10.3 TOC builder (CAG)
+
+```ts
+// apps/web/src/lib/memory/book-toc.ts
+export interface TocSymbol { identity: string; intent: string; kind: string; startLine?: number }
+export interface TocFile { path: string; summary: string; symbols: TocSymbol[] }
+export interface TocDir { path: string; children: Array<TocDir | TocFile>; fileCount: number; symbolCount: number }
+export interface MemoryBook {
+  root: TocDir;
+  stats: { fileCount: number; symbolCount: number };
+}
+export function buildMemoryBook(symbols: Array<{
+  filePath: string; identity: string; intent: string; kind: string; startLine?: number | null;
+}>): MemoryBook;
+export function fileSummary(symbols: TocSymbol[]): string; // first 1–3 intents, ≤ 160 chars
+export function formatTocForPrompt(book: MemoryBook, budgetTokens?: number): string;
+export function bookToFlow(book: MemoryBook): { nodes: FlowNode[]; edges: FlowEdge[] };
+```
+
+`fileSummary`: concatenate unique intents, truncated. No extra DB column.
+
+`formatTocForPrompt`: markdown outline `## dir / file — summary` plus at most 2 identities per file; drop deepest files first when over budget.
+
+### 10.4 RAG API (intent + identity only)
+
+Reuse M1 actions; add neighbor walk:
+
+```ts
+searchByIntent(projectId, query, k = 8): SymbolCard[]
+lookupIdentity(projectId, identityOrPartial): SymbolCard | null
+expandNeighbors(projectId, identity, hops = 1): SymbolCard[]  // same file + heuristic references
+```
+
+`SymbolCard = { intent, identity, filePath, startLine, kind }` — no source text.
+
+### 10.5 File / API map (B*)
+
+| Phase | Touch | Change |
+|-------|-------|--------|
+| B1 | `apps/web/src/lib/memory/book-toc.ts` (+ test) | `buildMemoryBook`, `fileSummary`, `formatTocForPrompt`, `bookToFlow` |
+| B2 | `memory-view.tsx`, `memory/page.tsx` | Layers: **Knowledge** (facts) / **Code book** (TOC graph). Index fixture button. Detail drawer. |
+| B2 | `apps/web/src/app/memory/actions.ts` | `getMemoryBook(projectId)` reads `code_symbols` and returns `MemoryBook` |
+| B3 | `code-index/actions.ts` | `expandNeighbors`; keep search/lookup |
+| B3 | `apps/web/src/lib/context/memory-toc.ts` | `formatTocForPrompt` wrapper for 011 phase map |
+
+Do **not** edit `schema.ts`. Do **not** edit `run-supervisor.ts` in B1–B2.
+
+### 10.6 Tests
+
+**Vitest B1:** fixture symbols under `src/a.ts` + `src/b.ts` → TOC has two files; summaries non-empty; `bookToFlow` nodes include dir/file/symbol; `formatTocForPrompt` respects a tiny budget.
+
+**Vitest B3:** `expandNeighbors` returns same-file symbols; `searchByIntent` still matches M1.
+
+**Playwright B2:** `/memory` → Code book → after indexing `apps/web/fixtures/code-index-sample` (or seed) → graph shows at least one symbol node whose label/detail includes intent **and** identity.
+
+### 10.7 Locked (Q41–Q43)
+
+See [000](000-completion-roadmap.md) §6.

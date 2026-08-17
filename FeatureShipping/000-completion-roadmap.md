@@ -31,7 +31,7 @@ Parallel execution is the default. See §8 for lanes, file ownership, and the ki
 | Canvas persistence | Authoring, lint, DSL emit | **Canvas lives only in `localStorage`** (`fsm-canvas-store`); no server record, no versions |
 | Runs | Blocking POST writes `runs` + `run_events` | No streaming, no retry in practice, run history UI is `MOCK_RUNS` |
 | Credentials | Live provider discovery + SSRF guard | Keys sit in `localStorage`; DB `credentials` table never written |
-| Memory | Graph CRUD + visualization | Code index (002), runtime hydration |
+| Memory | Graph CRUD + visualization + M1 indexer | Book/TOC graph (CAG), RAG by intent/identity, studio Code-book layer |
 | Export | `fsm.json` browser download | ZIP, compose codegen, git push, `export_jobs` |
 | Tools (C++/Python/Bash over gRPC) | — | Entire runtime; `packages/proto`, `packages/grpc-bridge` absent |
 | Token optimization | Authoring of State 0 / SYS_FUNC | No runtime hydration, no ledger; `tokensIn/out/latencyMs` never populated |
@@ -75,7 +75,7 @@ Use this table to know when a *capability* is online. Do **not** use it as a sta
 | **2 — Determinism** | [010](010-tool-runtime-grpc.md) | A `SCRIPT` state executes real Python/Bash over gRPC in a sandboxed container |
 | **3 — Distribution** | [004](004-harness-export.md) | Exported bundle boots via `docker compose up` and completes a fixture FSM |
 | **4 — Product shell** | [007](007-calendar.md), [012](012-copilot.md) | No `cta="Soon"` tiles remain; copilot edits the canvas through validated ops |
-| **Anytime** | [002](002-memory-and-code-index.md) | Already **Detailed** — no wave depends on it; M5 TOC feeds 011 |
+| **Anytime** | [002](002-memory-and-code-index.md) | Graph + **book (RAG+CAG)** memory: TOC graph, intent/identity navigation; M5 TOC feeds 011 |
 | **5 — FSM contract** | [013](013-state-signal-catalog.md), [014](014-run-contract.md) | Palette is segregated; custom states/signals have a procedure; runs retry, verify, resume, deny tools, and drop per-state memory |
 
 ## 4. Definition of done (v1)
@@ -132,6 +132,9 @@ Resolving these unblocks the docs below; each is recorded again in the owning do
 | Q38 | Retry vs self-loop | **Independent**. `retryMax` is executor attempts; `maxIterations` is taken self-loop edges. | 014 |
 | Q39 | Per-state memory | **Drop history after success** (default). `retainContext: true` opt-in. SYS_FUNC dehydrate still wins at cluster boundaries. | 014 |
 | Q40 | Schema for cursor | **No new tables**. Cursor is `run_events.kind = "run.cursor"`. | 014 |
+| Q41 | Memory address | **Intent + identity only**. Never use full file bodies as the retrieval key. | 002 |
+| Q42 | RAG vs CAG | **CAG** = TOC graph + per-file summaries always available (token-capped). **RAG** = fetch symbol cards by intent/identity/`expandNeighbors`. | 002 |
+| Q43 | Code memory UI | **Graphical** (React Flow dir/file/symbol), not table-only. Facts graph stays. | 002 |
 
 Still open (do not block Wave 0–5): Q4 meta-cognitive auto-apply, Q17 mixed tool languages, Q28 Turso tier, Q30 script-template sharing.
 
@@ -281,3 +284,13 @@ After 001 authoring exists (true on `master`). Do **not** wait for 003 E4.
 4. After 013 F1 types exist **and** a single Lane R agent holds `run-supervisor.ts`: wire R1–R5 in one PR (or stacked PRs on that branch).
 
 Playwright for 014 needs `FSM_MOCK_PROVIDER=1` and live executors (003 E1+). Authoring E2E for 013 does not.
+
+### 8.10 Memory book (002 B1–B3) — Grok 4.6
+
+Anytime; does not wait on 013/014. Base on `origin/cursor/code-index-m1-1e9b` (M1 indexer).
+
+1. **B1** `book-toc.ts` + Vitest (no UI).
+2. **B2** `/memory` Code-book React Flow layer + Playwright (stacks on B1).
+3. **B3** `expandNeighbors` + `formatTocForPrompt` for 011 (can ship with B1 if files do not collide).
+
+Do not edit `schema.ts` or `run-supervisor.ts`. Use **Grok 4.6** only.

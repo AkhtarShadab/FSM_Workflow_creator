@@ -218,7 +218,8 @@ store. Checkpoints are ephemeral (TTL); memory is durable and queryable.
 | Edge relations | `derived_from`, `summarizes`, `prefers`, `references` (typed, directed) |
 | Writers | System Functions (post-dehydration summaries → `summarizes` edges), Audit analyzer (§6.5), manual UI entries |
 | Readers | State 0 hydration pulls the project's top-N memory nodes (by recency/degree) into the phase map; System Functions re-hydrate relevant subgraphs |
-| UI | `/memory` — graph view (sticky-note nodes + pencil edges, same visual language as the canvas); the landing **integrations bento** (Workflow · Memory · Calendar · Notifications) links here |
+| UI | `/memory` — **graph** of facts **and** of the code book (dir → file → symbol). Same React Flow stack as the canvas. Code pages are addressed by **intent + identity** (FeatureShipping 002 §10). |
+| Retrieval | **CAG**: table-of-contents graph + per-file summaries (token-capped). **RAG**: `searchByIntent` / `lookupIdentity` / `expandNeighbors` return symbol cards, never file bodies. |
 | Export | Memory tables are platform-side; exported harnesses get a read-only memory snapshot as `memory.json` (v2, see Q29) |
 
 Why graph-based: FSM states produce/consume knowledge with many-to-many structure —
