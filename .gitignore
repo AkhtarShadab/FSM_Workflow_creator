@@ -33,6 +33,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # C++ (tool runtimes)
 *.o

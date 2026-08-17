@@ -1,0 +1,65 @@
+# FeatureShipping 010 G2 — local Python + Bash tool runtimes.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# The Next app is still started on the host (`pnpm dev`). G3 wires the SCRIPT
+# executor; until then these services are for handshake / Execute smoke tests.
+#
+# TOOL_ENDPOINTS (JSON array) — put this in apps/web/.env.local when G3 lands:
+#
+#   TOOL_ENDPOINTS=[{"id":"python","address":"127.0.0.1:50051","language":"python"},{"id":"bash","address":"127.0.0.1:50052","language":"bash"}]
+#
+# Unset TOOL_ENDPOINTS → SCRIPT fails fast with TOOL_RUNTIME_UNAVAILABLE.
+# Same-compose DNS (if the web app is added later): tools-python:50051 and
+# tools-bash:50051 (bash publishes 50052 on the host only).
+
+services:
+  tools-python:
+    build:
+      context: .
+      dockerfile: runtimes/tools-python/Dockerfile
+    image: fsm-tools-python:dev
+    ports:
+      - "50051:50051"
+    environment:
+      BIND_ADDR: 0.0.0.0:50051
+      TOOLS_DIR: /app/tools
+      TOOL_APPLY_LIMITS: "1"
+    user: "65534:65534"
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: "0.50"
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    restart: unless-stopped
+
+  tools-bash:
+    build:
+      context: .
+      dockerfile: runtimes/tools-bash/Dockerfile
+    image: fsm-tools-bash:dev
+    ports:
+      - "50052:50051"
+    environment:
+      BIND_ADDR: 0.0.0.0:50051
+      TOOLS_DIR: /app/tools
+      TOOL_APPLY_LIMITS: "1"
+    user: "65534:65534"
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: "0.25"
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    restart: unless-stopped

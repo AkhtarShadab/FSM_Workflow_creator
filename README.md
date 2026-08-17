@@ -56,3 +56,20 @@ parallel at any time.
 
 To execute in parallel, start with the **ship-dispatcher** subagent
 ([`.cursor/agents/`](.cursor/agents/README.md)), which fans out the four lanes.
+
+## Local tool runtimes (010 G2)
+
+Python and Bash gRPC servers (not wired to `SCRIPT` until G3):
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+`TOOL_ENDPOINTS` is a JSON array consumed by `packages/grpc-bridge`. Copy the
+commented value from [`apps/web/.env.example`](apps/web/.env.example):
+
+```text
+TOOL_ENDPOINTS=[{"id":"python","address":"127.0.0.1:50051","language":"python"},{"id":"bash","address":"127.0.0.1:50052","language":"bash"}]
+```
+
+Leave it unset to keep working without Docker — the bridge reports unavailable.

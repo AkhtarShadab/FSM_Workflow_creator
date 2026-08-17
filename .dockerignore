@@ -1,0 +1,20 @@
+# Keep tool-runtime image builds small; context is the repo root.
+.git
+**/.git
+node_modules
+**/node_modules
+**/.next
+**/.venv
+**/venv
+**/__pycache__
+**/gen
+**/.turbo
+**/coverage
+**/playwright-report
+**/test-results
+**/.pnpm-store
+*.md
+!runtimes/**/*.md
+FeatureShipping
+.cursor
+.github

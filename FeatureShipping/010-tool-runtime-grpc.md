@@ -1,8 +1,8 @@
 # 010 — Tool Runtime (gRPC)
 
-> Status: **Detailed**
+> Status: **Detailed** (G1–G2 shipped; G3–G5 remain)
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §8 (proto contract, D5/D6) · Roadmap Wave 2
-> Code today: none — `packages/proto` and `packages/grpc-bridge` do not exist; `SCRIPT` states are simulated
+> Code today: `packages/proto`, `packages/grpc-bridge` (fake), `runtimes/tools-python`, `runtimes/tools-bash`, `docker-compose.dev.yml`. SCRIPT executor wiring is G3.
 > **Parallel:** G1–G2 start immediately (greenfield packages). G3 waits for [003](003-live-executors.md) E1. G4–G5 follow G2.
 
 ---
