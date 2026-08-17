@@ -9,6 +9,10 @@ import {
   createRunSupervisor,
   reconcileOrphanedRuns,
 } from "@/lib/run-supervisor";
+import {
+  createMemoryCheckpointStore,
+  type MemoryCheckpointStore,
+} from "@/lib/context/checkpoint";
 
 const START_END = {
   states: [
@@ -214,5 +218,127 @@ describe("run supervisor", () => {
     expect(maps[0]?.estimatedTokens).toBeGreaterThan(0);
     expect(maps[0]?.estimatedTokens).toBeLessThanOrEqual(400);
     expect(maps[1]).toBe(maps[0]);
+  });
+
+  it("runs dehydrate/mask/hydrate on SYSTEM_FUNCTION and emits ::SYSTEM.HYDRATE", async () => {
+    const store = createMemoryRunStore();
+    const checkpoints = createMemoryCheckpointStore();
+    const prompts: string[] = [];
+    const supervisor = createRunSupervisor({
+      store,
+      checkpoints,
+      getExecutor: (type) => async (ctx) => {
+        if (type === "AI") {
+          prompts.push(ctx.node?.data.ai.systemPrompt ?? "");
+          const blob = "cluster-output ".repeat(40);
+          return `::AI.NEXT|message="${blob}"|pages=12`;
+        }
+        return getExecutor(type)(ctx);
+      },
+    });
+    const ai1 = defaultNodeData("AI", "Ingest");
+    ai1.ai.systemPrompt = "Ingest brain.";
+    const ai2 = defaultNodeData("AI", "Transform");
+    ai2.ai.systemPrompt = "Transform brain.";
+    const sf = defaultNodeData("SYSTEM_FUNCTION", "Boundary");
+    sf.systemFunction = {
+      ...sf.systemFunction,
+      summaryStrategy: "template",
+      enabledStateIds: ["AI2", "END"],
+    };
+    await supervisor.executeRun(90, {
+      states: [
+        { id: "S0", type: "START" },
+        { id: "AI1", type: "AI" },
+        {
+          id: "SF1",
+          type: "SYSTEM_FUNCTION",
+          mask: {
+            enabledStateIds: ["AI2", "END"],
+            disabledStateIds: [],
+            rewire: [],
+          },
+        },
+        { id: "AI2", type: "AI" },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "S0", on: "::SCRIPT.NEXT", to: "AI1" },
+        { from: "AI1", on: "::AI.NEXT", to: "SF1" },
+        { from: "SF1", on: "::SYSTEM.HYDRATE", to: "AI2" },
+        { from: "AI2", on: "::AI.NEXT", to: "END" },
+      ],
+      nodesById: new Map([
+        ["AI1", { id: "AI1", data: ai1 }],
+        ["SF1", { id: "SF1", data: sf }],
+        ["AI2", { id: "AI2", data: ai2 }],
+      ]),
+    });
+    expect(store.statuses.get(90)).toBe("succeeded");
+    const hydrateEv = store.events.find(
+      (e) =>
+        e.stateId === "SF1" &&
+        e.kind === "state.output" &&
+        JSON.stringify(e.payload).includes("::SYSTEM.HYDRATE")
+    );
+    expect(hydrateEv).toBeDefined();
+    const payload = hydrateEv?.payload as {
+      signal: string;
+      payload: { checkpoint_id: string; tokensSaved: number };
+    };
+    expect(payload.signal).toBe("::SYSTEM.HYDRATE");
+    expect(payload.payload.checkpoint_id).toBe("run:90:cp:0");
+    expect(payload.payload.tokensSaved).toBeGreaterThan(0);
+    expect(checkpoints.rows).toHaveLength(1);
+    expect(checkpoints.rows[0]?.key).toBe("run:90:cp:0");
+    expect(checkpoints.rows[0]?.summary).toContain("pages=12");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("Phase map:");
+    expect(prompts[1]).toContain("Checkpoint summary:");
+    expect(prompts[1]).toContain("Transform brain.");
+    expect(prompts[1]).toContain("Phase map:");
+  });
+
+  it("emits a warning and continues when llm summarizer fails", async () => {
+    const store = createMemoryRunStore();
+    const checkpoints: MemoryCheckpointStore = createMemoryCheckpointStore();
+    const supervisor = createRunSupervisor({
+      store,
+      checkpoints,
+      summarizeLlm: async () => {
+        throw new Error("provider down");
+      },
+    });
+    const sf = defaultNodeData("SYSTEM_FUNCTION", "Boundary");
+    sf.systemFunction = {
+      ...sf.systemFunction,
+      summaryStrategy: "llm",
+      enabledStateIds: ["END"],
+    };
+    await supervisor.executeRun(91, {
+      states: [
+        { id: "S0", type: "START" },
+        {
+          id: "SF1",
+          type: "SYSTEM_FUNCTION",
+          mask: {
+            enabledStateIds: ["END"],
+            disabledStateIds: [],
+            rewire: [],
+          },
+        },
+        { id: "END", type: "END" },
+      ],
+      edges: [
+        { from: "S0", on: "::SCRIPT.NEXT", to: "SF1" },
+        { from: "SF1", on: "::SYSTEM.HYDRATE", to: "END" },
+      ],
+      nodesById: new Map([["SF1", { id: "SF1", data: sf }]]),
+    });
+    expect(store.statuses.get(91)).toBe("succeeded");
+    const warning = store.events.find((e) => e.kind === "state.warning");
+    expect(warning).toBeDefined();
+    expect(JSON.stringify(warning?.payload)).toMatch(/fell back to template/);
+    expect(checkpoints.rows).toHaveLength(1);
   });
 });

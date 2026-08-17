@@ -5,7 +5,12 @@ export {
   type EngineMask,
   type ResolveResult,
 } from "./resolver";
-export { isStateDisabledByMask } from "./mask";
+export {
+  isStateDisabledByMask,
+  swapToolSchemas,
+  type ToolSchema,
+  type MaskSwapResult,
+} from "./mask";
 export {
   runState,
   defaultClock,

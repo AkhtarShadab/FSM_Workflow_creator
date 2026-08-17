@@ -21,6 +21,7 @@ export interface FsmDslState {
     disabledStateIds?: string[];
     dehydrateClusters?: string[];
     hydrateCluster?: string;
+    summaryStrategy?: "template" | "llm";
   };
   inputSchema?: unknown;
   outputSchema?: unknown;

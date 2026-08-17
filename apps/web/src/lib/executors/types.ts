@@ -1,4 +1,4 @@
-import type { EngineState, Emission } from "@fsm/engine";
+import type { EngineState, Emission, ToolSchema } from "@fsm/engine";
 import type { PhaseMap } from "@/lib/context/phase-map";
 import type { StateNodeData } from "@/lib/fsm-types";
 
@@ -50,9 +50,14 @@ export interface ExecutorContext {
   /**
    * Run-level State 0 phase map (011 T1). Built once per executeRun and
    * attached to every state; the supervisor prepends `formatPhaseMap` to the
-   * first AI / EXTERNAL_AI system prompt only.
+   * first AI / EXTERNAL_AI system prompt only. SYS_FUNC hydrate (T2) re-injects
+   * at cluster boundaries.
    */
   phaseMap?: PhaseMap;
+  /** Active cluster tool schemas after the last SYS_FUNC mask swap (011 T2). */
+  toolSchemas?: ToolSchema[];
+  /** Compact hydrate bundle prepended to the next AI prompt after a SYS_FUNC. */
+  hydratedContext?: string;
 }
 
 export type Executor = (ctx: ExecutorContext) => Promise<Emission>;

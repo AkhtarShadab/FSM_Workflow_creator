@@ -1,10 +1,19 @@
 import { db } from "@/db";
-import { fsmDefinitions, runEvents, runs } from "@/db/schema";
+import { checkpoints, fsmDefinitions, runEvents, runs } from "@/db/schema";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
+import {
+  checkpointConfigFromState,
+  createMemoryCheckpointStore,
+  runCheckpointBoundary,
+  type CheckpointStore,
+  type HistoryMessage,
+  type LlmSummarizer,
+} from "@/lib/context/checkpoint";
 import {
   buildPhaseMap,
   engineGraphToDsl,
   formatPhaseMap,
+  type FsmDsl,
   type PhaseMap,
 } from "@/lib/context/phase-map";
 import { defaultNodeData, type CanvasData, type StateNodeData } from "@/lib/fsm-types";
@@ -23,6 +32,7 @@ import {
   type Emission,
   type EngineState,
   type StateExecutor,
+  type ToolSchema,
 } from "@fsm/engine";
 import { and, asc, desc, eq, gt } from "drizzle-orm";
 
@@ -200,6 +210,25 @@ export const drizzleRunStore: RunStore = {
   },
 };
 
+export const drizzleCheckpointStore: CheckpointStore = {
+  async insert(row) {
+    const [inserted] = await db
+      .insert(checkpoints)
+      .values({
+        runId: row.runId,
+        stateId: row.stateId,
+        key: row.key,
+        summary: row.summary,
+        historyJson: row.historyJson,
+        tokensSaved: row.tokensSaved,
+        createdAt: row.createdAt,
+        expiresAt: row.expiresAt,
+      })
+      .returning();
+    return { ...row, id: inserted?.id };
+  },
+};
+
 export interface ActiveRun {
   controller: AbortController;
   done: Promise<void>;
@@ -209,6 +238,8 @@ export interface SupervisorDeps {
   store?: RunStore;
   bus?: EventBus;
   getExecutor?: (type: string) => Executor;
+  checkpoints?: CheckpointStore;
+  summarizeLlm?: LlmSummarizer;
 }
 
 export interface ExecuteRunOptions {
@@ -225,6 +256,10 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
   const store = deps.store ?? drizzleRunStore;
   const bus = deps.bus ?? defaultBus;
   const resolveExecutor = deps.getExecutor ?? getExecutor;
+  const checkpointStore =
+    deps.checkpoints ??
+    (deps.store != null ? createMemoryCheckpointStore() : drizzleCheckpointStore);
+  const summarizeLlm = deps.summarizeLlm;
   const registry = new Map<number, ActiveRun>();
 
   function ensureController(runId: number): AbortController {
@@ -275,9 +310,14 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     runId: number,
     nodesById: Map<string, { id: string; data: StateNodeData }>,
     custom?: StateExecutor,
-    phaseMap?: PhaseMap
+    phaseMap?: PhaseMap,
+    dsl?: FsmDsl
   ): StateExecutor {
     let firstAiInjected = false;
+    let checkpointSeq = 0;
+    let pendingHydrateText = "";
+    let activeSchemas: ToolSchema[] = [];
+    const history: HistoryMessage[] = [];
     const phaseMapText = phaseMap ? formatPhaseMap(phaseMap) : "";
     return async ({ state, payload, signal }) => {
       if (signal.aborted) {
@@ -291,7 +331,11 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
       const started = Date.now();
       const isAi = state.type === "AI" || state.type === "EXTERNAL_AI";
       let node = nodesById.get(state.id);
-      if (phaseMap && isAi && !firstAiInjected) {
+      if (pendingHydrateText && isAi) {
+        firstAiInjected = true;
+        node = withPhaseMapPrompt(node, state, pendingHydrateText);
+        pendingHydrateText = "";
+      } else if (phaseMap && isAi && !firstAiInjected) {
         firstAiInjected = true;
         node = withPhaseMapPrompt(node, state, phaseMapText);
       }
@@ -303,11 +347,32 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         signal,
         emit: (draft, opts) => emit(runId, draft, opts).then(() => undefined),
         phaseMap,
+        toolSchemas: activeSchemas,
+        hydratedContext: node && isAi ? aiPromptOf(node, state) : undefined,
       };
       try {
-        const emission: Emission = custom
-          ? await custom({ state, payload, signal })
-          : await resolveExecutor(state.type)(ctx);
+        const emission: Emission =
+          state.type === "SYSTEM_FUNCTION" && dsl
+            ? await runSysFuncCheckpoint({
+                runId,
+                state,
+                node,
+                dsl,
+                phaseMap,
+                history,
+                seq: checkpointSeq++,
+                signal,
+                currentSchemas: activeSchemas,
+                onSwap: (loaded) => {
+                  activeSchemas = loaded;
+                },
+                onHydrate: (text) => {
+                  pendingHydrateText = text;
+                },
+              })
+            : custom
+              ? await custom({ state, payload, signal })
+              : await resolveExecutor(state.type)(ctx);
         const latencyMs = Date.now() - started;
         const parsed = parseSignal(emission);
         const tokensIn =
@@ -318,6 +383,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
           typeof parsed.payload.tokensOut === "number"
             ? parsed.payload.tokensOut
             : null;
+        history.push(historyFromEmission(state, parsed));
         await emit(runId, {
           stateId: state.id,
           kind: "state.output",
@@ -347,6 +413,56 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         throw err;
       }
     };
+  }
+
+  async function runSysFuncCheckpoint(args: {
+    runId: number;
+    state: EngineState;
+    node?: { id: string; data: StateNodeData };
+    dsl: FsmDsl;
+    phaseMap?: PhaseMap;
+    history: HistoryMessage[];
+    seq: number;
+    signal: AbortSignal;
+    currentSchemas: ToolSchema[];
+    onSwap: (loaded: ToolSchema[]) => void;
+    onHydrate: (text: string) => void;
+  }): Promise<Emission> {
+    const dslState = args.dsl.states.find((s) => s.id === args.state.id);
+    const fromDsl = checkpointConfigFromState(dslState);
+    const sf = args.node?.data.systemFunction;
+    const strategy =
+      sf?.summaryStrategy ?? fromDsl.summaryStrategy ?? "template";
+    const enabledStateIds =
+      args.state.mask?.enabledStateIds ??
+      sf?.enabledStateIds ??
+      fromDsl.enabledStateIds;
+    const boundary = await runCheckpointBoundary({
+      runId: args.runId,
+      stateId: args.state.id,
+      seq: args.seq,
+      history: args.history,
+      dsl: args.dsl,
+      phaseMap: args.phaseMap,
+      currentSchemas: args.currentSchemas,
+      dehydrateClusters: fromDsl.dehydrateClusters,
+      hydrateCluster: fromDsl.hydrateCluster,
+      enabledStateIds,
+      strategy,
+      llm: summarizeLlm,
+      store: checkpointStore,
+      signal: args.signal,
+    });
+    args.onSwap(boundary.mask.loaded);
+    args.onHydrate(boundary.hydrated.text);
+    if (boundary.warning) {
+      await emit(args.runId, {
+        stateId: args.state.id,
+        kind: "state.warning",
+        payload: { message: boundary.warning },
+      });
+    }
+    return boundary.emission;
   }
 
   async function executeRun(
@@ -384,7 +500,13 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         const result = await runFsm({
           states,
           edges,
-          executeState: wrapExecute(runId, nodesById, opts.executeState, phaseMap),
+          executeState: wrapExecute(
+            runId,
+            nodesById,
+            opts.executeState,
+            phaseMap,
+            dsl
+          ),
           executeChild: async () => ({ stub: true }),
           abortSignal: controller.signal,
         });
@@ -532,6 +654,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     store,
     bus,
     emit,
+    checkpoints: checkpointStore,
   };
 }
 
@@ -585,5 +708,31 @@ function withPhaseMapPrompt(
         systemPrompt: join(base.ai?.systemPrompt),
       },
     },
+  };
+}
+
+function aiPromptOf(
+  node: { data: StateNodeData },
+  state: EngineState
+): string | undefined {
+  if (state.type === "EXTERNAL_AI") return node.data.externalAi?.systemPrompt;
+  if (state.type === "AI") return node.data.ai?.systemPrompt;
+  return undefined;
+}
+
+function historyFromEmission(
+  state: EngineState,
+  parsed: ReturnType<typeof parseSignal>
+): HistoryMessage {
+  const vars: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed.payload)) {
+    if (v != null && typeof v !== "object") vars[k] = String(v);
+  }
+  const isAi = state.type === "AI" || state.type === "EXTERNAL_AI";
+  return {
+    stateId: state.id,
+    role: isAi ? "assistant" : "tool",
+    content: `${parsed.signal}|${JSON.stringify(parsed.payload)}`,
+    vars: Object.keys(vars).length > 0 ? vars : undefined,
   };
 }

@@ -17,6 +17,10 @@ export default defineConfig({
         __dirname,
         "../../packages/byok-gateway/src/index.ts"
       ),
+      "@fsm/engine": path.resolve(
+        __dirname,
+        "../../packages/fsm-engine/src/index.ts"
+      ),
     },
   },
 });
