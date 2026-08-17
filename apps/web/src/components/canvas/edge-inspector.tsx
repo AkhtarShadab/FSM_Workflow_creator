@@ -45,6 +45,7 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes) ?? EMPTY_NODES;
   const selectEdge = useCanvasStore((s) => s.selectEdge);
   const updateEdgeSignal = useCanvasStore((s) => s.updateEdgeSignal);
+  const updateEdgeData = useCanvasStore((s) => s.updateEdgeData);
   const removeEdge = useCanvasStore((s) => s.removeEdge);
 
   const edge = edges.find((e) => e.id === selectedEdgeId);
@@ -57,7 +58,6 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const currentSignal = String(edge.data?.signal ?? "");
   const currentKind = (edge.type ?? "script") as EdgeKind;
   const topologyKind = edge.data?.kind ?? "transition";
-  const updateEdgeData = useCanvasStore((s) => s.updateEdgeData);
 
   return (
     <aside className="absolute top-4 right-4 bottom-4 z-20 w-[min(380px,92vw)]">

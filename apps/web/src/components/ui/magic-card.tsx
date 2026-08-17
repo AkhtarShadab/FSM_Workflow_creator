@@ -1,13 +1,13 @@
 "use client"
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef } from "react"
 import {
   motion,
   useMotionTemplate,
   useMotionValue,
   useSpring,
 } from "motion/react"
-import { useTheme } from "@/components/theme-provider"
+import { useClientMounted, useTheme } from "@/components/theme-provider"
 
 import { cn } from "@/lib/utils"
 
@@ -73,9 +73,7 @@ export function MagicCard(props: MagicCardProps) {
   const glowBlur = isOrbMode(props) ? (props.glowBlur ?? 60) : 60
   const glowOpacity = isOrbMode(props) ? (props.glowOpacity ?? 0.9) : 0.9
   const { theme, systemTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => setMounted(true), [])
+  const mounted = useClientMounted()
 
   const isDarkTheme = useMemo(() => {
     if (!mounted) return true

@@ -1,15 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useTheme } from "@/components/theme-provider";
+import { useTheme, useClientMounted } from "@/components/theme-provider";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { cn } from "@/lib/utils";
 
 export function ModeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
+  const mounted = useClientMounted();
 
   if (!mounted) {
     return (

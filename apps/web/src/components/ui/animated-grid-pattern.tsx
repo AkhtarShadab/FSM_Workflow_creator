@@ -45,26 +45,16 @@ export function AnimatedGridPattern({
 }: AnimatedGridPatternProps) {
   const id = useId()
   const containerRef = useRef<SVGSVGElement | null>(null)
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
+  const dimensionsRef = useRef({ width: 0, height: 0 })
   const [squares, setSquares] = useState<Array<Square>>([])
 
   const getPos = useCallback((): [number, number] => {
+    const { width: dw, height: dh } = dimensionsRef.current
     return [
-      Math.floor((Math.random() * dimensions.width) / width),
-      Math.floor((Math.random() * dimensions.height) / height),
+      Math.floor((Math.random() * dw) / width),
+      Math.floor((Math.random() * dh) / height),
     ]
-  }, [dimensions.height, dimensions.width, height, width])
-
-  const generateSquares = useCallback(
-    (count: number) => {
-      return Array.from({ length: count }, (_, i) => ({
-        id: i,
-        pos: getPos(),
-        iteration: 0,
-      }))
-    },
-    [getPos]
-  )
+  }, [height, width])
 
   const updateSquarePosition = useCallback(
     (squareId: number) => {
@@ -86,41 +76,40 @@ export function AnimatedGridPattern({
   )
 
   useEffect(() => {
-    if (dimensions.width && dimensions.height) {
-      setSquares(generateSquares(numSquares))
-    }
-  }, [dimensions.width, dimensions.height, generateSquares, numSquares])
-
-  useEffect(() => {
     const element = containerRef.current
-    let resizeObserver: ResizeObserver | null = null
+    if (!element) return
 
-    if (element) {
-      resizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          setDimensions((currentDimensions) => {
-            const nextWidth = entry.contentRect.width
-            const nextHeight = entry.contentRect.height
-            if (
-              currentDimensions.width === nextWidth &&
-              currentDimensions.height === nextHeight
-            ) {
-              return currentDimensions
-            }
-            return { width: nextWidth, height: nextHeight }
-          })
+    const last = { width: -1, height: -1 }
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const nextWidth = entry.contentRect.width
+        const nextHeight = entry.contentRect.height
+        if (last.width === nextWidth && last.height === nextHeight) continue
+        last.width = nextWidth
+        last.height = nextHeight
+        dimensionsRef.current = { width: nextWidth, height: nextHeight }
+        if (nextWidth && nextHeight) {
+          setSquares(
+            Array.from({ length: numSquares }, (_, i) => ({
+              id: i,
+              pos: [
+                Math.floor((Math.random() * nextWidth) / width),
+                Math.floor((Math.random() * nextHeight) / height),
+              ] as [number, number],
+              iteration: 0,
+            }))
+          )
+        } else {
+          setSquares([])
         }
-      })
-
-      resizeObserver.observe(element)
-    }
-
-    return () => {
-      if (resizeObserver) {
-        resizeObserver.disconnect()
       }
+    })
+
+    resizeObserver.observe(element)
+    return () => {
+      resizeObserver.disconnect()
     }
-  }, [])
+  }, [height, numSquares, width])
 
   return (
     <svg

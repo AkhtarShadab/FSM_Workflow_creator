@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Check, Download, FileArchive, GitBranch } from "lucide-react";
 import { BlurFade } from "@/components/ui/blur-fade";
 import { ThemedMagicCard } from "@/components/themed-magic-card";
@@ -45,6 +45,26 @@ const COMPOSE_PREVIEW = `services:
     build: { dockerfile: Dockerfile.gateway }
     env_file: .env   # BYOK base URL + key`;
 
+function Section({
+  title,
+  accent,
+  children,
+}: {
+  title: string;
+  accent: string;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
+        <span className={cn("h-2 w-2 rounded-full", accent)} />
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
 export function ExportWizard({
   projectId,
   projectName,
@@ -82,24 +102,6 @@ export function ExportWizard({
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 2000);
   };
-
-  const Section = ({
-    title,
-    accent,
-    children,
-  }: {
-    title: string;
-    accent: string;
-    children: React.ReactNode;
-  }) => (
-    <section>
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
-        <span className={cn("h-2 w-2 rounded-full", accent)} />
-        {title}
-      </h2>
-      {children}
-    </section>
-  );
 
   return (
     <div className="flex h-screen flex-col bg-background">

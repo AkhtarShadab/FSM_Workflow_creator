@@ -36,11 +36,16 @@ export function ProjectList({ projects }: { projects: Project[] }) {
   const [pending, startTransition] = useTransition();
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
+  const [seenLength, setSeenLength] = useState(projects.length);
   const canvases = useCanvasStore((s) => s.canvases);
 
-  // Auto-fill effect: reveal rows progressively
-  useEffect(() => {
+  if (seenLength !== projects.length) {
+    setSeenLength(projects.length);
     setVisibleCount(0);
+  }
+
+  // Auto-fill: reveal rows on an interval (callback setState is fine).
+  useEffect(() => {
     if (projects.length === 0) return;
     const timer = setInterval(() => {
       setVisibleCount((c) => {

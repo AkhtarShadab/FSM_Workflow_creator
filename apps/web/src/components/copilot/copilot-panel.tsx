@@ -33,6 +33,14 @@ const SUGGESTIONS = [
 
 let msgN = 0;
 const nextMsgId = () => `m_${++msgN}`;
+let placeN = 0;
+const nextPlace = () => {
+  placeN += 1;
+  return {
+    x: 200 + (placeN * 73) % 400,
+    y: 100 + (placeN * 47) % 300,
+  };
+};
 
 /** Open chat UI — avatars, suggestion chips, typing indicator (§10.4) */
 export function CopilotPanel({ projectId }: { projectId: string }) {
@@ -75,10 +83,7 @@ export function CopilotPanel({ projectId }: { projectId: string }) {
       };
       const type = map[kind];
       if (type) {
-        const id = addNode(projectId, type, {
-          x: 200 + Math.random() * 400,
-          y: 100 + Math.random() * 300,
-        });
+        const id = addNode(projectId, type, nextPlace());
         reply(`Pinned a ${type} sticky (\`${id}\`) to the board. Drag it into place and wire it up.`);
         return;
       }

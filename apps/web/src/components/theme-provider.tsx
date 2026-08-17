@@ -6,7 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -61,6 +61,35 @@ function resolveTheme(
   return theme === "system" ? systemTheme : theme;
 }
 
+const themeListeners = new Set<() => void>();
+
+function subscribeStoredTheme(onStoreChange: () => void) {
+  themeListeners.add(onStoreChange);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY || event.key === null) onStoreChange();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    themeListeners.delete(onStoreChange);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+function subscribeSystemTheme(onStoreChange: () => void) {
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  media.addEventListener("change", onStoreChange);
+  return () => media.removeEventListener("change", onStoreChange);
+}
+
+const subscribeNever = () => () => {};
+const getClientTrue = () => true;
+const getServerFalse = () => false;
+
+/** True after hydration; false during SSR — no cascading setState. */
+export function useClientMounted() {
+  return useSyncExternalStore(subscribeNever, getClientTrue, getServerFalse);
+}
+
 /**
  * Blocking snippet for `<head>` — applies the stored/system theme before paint
  * so SSR + hydration do not flash the wrong colors.
@@ -68,32 +97,21 @@ function resolveTheme(
 export const themeInitScript = `(function(){try{var k=${JSON.stringify(STORAGE_KEY)};var d=${JSON.stringify(DEFAULT_THEME)};var t=localStorage.getItem(k)||d;var r=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;if(r==="dark")document.documentElement.classList.add("dark");else document.documentElement.classList.remove("dark");}catch(e){document.documentElement.classList.add("dark");}})();`;
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME);
-  const [systemTheme, setSystemTheme] = useState<ResolvedTheme | undefined>(
-    undefined
+  const theme = useSyncExternalStore(
+    subscribeStoredTheme,
+    readStoredTheme,
+    () => DEFAULT_THEME
+  );
+  const systemTheme = useSyncExternalStore(
+    subscribeSystemTheme,
+    getSystemTheme,
+    (): ResolvedTheme | undefined => undefined
   );
 
-  // Hydrate preference + listen for OS changes once on the client.
-  // Initial class is already set by themeInitScript before paint.
   useEffect(() => {
-    const stored = readStoredTheme();
-    const system = getSystemTheme();
-    setThemeState(stored);
-    setSystemTheme(system);
-    applyResolvedClass(resolveTheme(stored, system));
-
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => {
-      const nextSystem = getSystemTheme();
-      setSystemTheme(nextSystem);
-      const current = readStoredTheme();
-      if (current === "system") {
-        applyResolvedClass(nextSystem);
-      }
-    };
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, []);
+    if (!systemTheme) return;
+    applyResolvedClass(resolveTheme(theme, systemTheme));
+  }, [theme, systemTheme]);
 
   const setTheme = useCallback((next: Theme) => {
     try {
@@ -101,7 +119,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
-    setThemeState(next);
+    themeListeners.forEach((listener) => listener());
     const system = typeof window !== "undefined" ? getSystemTheme() : "dark";
     applyResolvedClass(resolveTheme(next, system));
   }, []);

@@ -5,6 +5,12 @@ import { motion } from "motion/react"
 
 import { cn } from "@/lib/utils"
 
+/** Deterministic 0..1 hash — stable across renders (no Math.random). */
+function unitRand(seed: number) {
+  const t = Math.sin(seed) * 43758.5453123
+  return t - Math.floor(t)
+}
+
 /**
  *  DotPattern Component Props
  *
@@ -102,8 +108,8 @@ export function DotPattern({
       return {
         x: col * width + cx + x,
         y: row * height + cy + y,
-        delay: Math.random() * 5,
-        duration: Math.random() * 3 + 2,
+        delay: unitRand(i + 1) * 5,
+        duration: unitRand(i + 101) * 3 + 2,
       }
     }
   )

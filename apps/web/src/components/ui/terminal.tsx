@@ -3,11 +3,13 @@
 import {
   Children,
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentType,
   type RefAttributes,
 } from "react"
@@ -33,6 +35,37 @@ const useSequence = () => useContext(SequenceContext)
 
 const ItemIndexContext = createContext<number | null>(null)
 const useItemIndex = () => useContext(ItemIndexContext)
+
+/** Elapsed-delay flag without setState-in-effect (subscribe to a timeout). */
+function useTimeoutFlag(active: boolean, delayMs: number): boolean {
+  const firedRef = useRef(false)
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      if (!active) {
+        firedRef.current = false
+        return () => {}
+      }
+      if (delayMs <= 0) {
+        firedRef.current = true
+        return () => {}
+      }
+      firedRef.current = false
+      const id = setTimeout(() => {
+        firedRef.current = true
+        onStoreChange()
+      }, delayMs)
+      return () => {
+        clearTimeout(id)
+      }
+    },
+    [active, delayMs]
+  )
+  return useSyncExternalStore(
+    subscribe,
+    () => (active && delayMs <= 0) || firedRef.current,
+    () => false
+  )
+}
 
 const motionElements = {
   article: motion.article,
@@ -79,15 +112,11 @@ export const AnimatedSpan = ({
 
   const sequence = useSequence()
   const itemIndex = useItemIndex()
-  const [hasStarted, setHasStarted] = useState(false)
-  useEffect(() => {
-    if (!sequence || itemIndex === null) return
-    if (!sequence.sequenceStarted) return
-    if (hasStarted) return
-    if (sequence.activeIndex === itemIndex) {
-      setHasStarted(true)
-    }
-  }, [sequence, hasStarted, itemIndex])
+  const hasStarted =
+    !!sequence &&
+    itemIndex !== null &&
+    sequence.sequenceStarted &&
+    sequence.activeIndex >= itemIndex
 
   const shouldAnimate = sequence ? hasStarted : startOnView ? isInView : true
 
@@ -137,7 +166,6 @@ export const TypingAnimation = ({
   ] as TerminalTypingMotionComponent
 
   const [displayedText, setDisplayedText] = useState<string>("")
-  const [started, setStarted] = useState(false)
   const elementRef = useRef<HTMLElement | null>(null)
   const isInView = useInView(elementRef as React.RefObject<Element>, {
     amount: 0.3,
@@ -159,32 +187,16 @@ export const TypingAnimation = ({
     sequenceItemIndexRef.current = itemIndex
   }, [sequence?.completeItem, itemIndex])
 
-  useEffect(() => {
-    let startTimeout: ReturnType<typeof setTimeout> | null = null
+  const startedFromSequence =
+    hasSequence &&
+    itemIndex !== null &&
+    sequenceStarted &&
+    sequenceActiveIndex !== null &&
+    sequenceActiveIndex >= itemIndex
 
-    if (hasSequence && itemIndex !== null) {
-      if (sequenceStarted && !started && sequenceActiveIndex === itemIndex) {
-        setStarted(true)
-      }
-    } else if (!startOnView || isInView) {
-      startTimeout = setTimeout(() => setStarted(true), delay)
-    }
-
-    return () => {
-      if (startTimeout !== null) {
-        clearTimeout(startTimeout)
-      }
-    }
-  }, [
-    delay,
-    startOnView,
-    isInView,
-    started,
-    hasSequence,
-    sequenceActiveIndex,
-    sequenceStarted,
-    itemIndex,
-  ])
+  const delayActive = !hasSequence && (!startOnView || isInView)
+  const startedFromDelay = useTimeoutFlag(delayActive, delay)
+  const started = startedFromSequence || startedFromDelay
 
   useEffect(() => {
     let typingEffect: ReturnType<typeof setInterval> | null = null
