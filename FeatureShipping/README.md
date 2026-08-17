@@ -42,8 +42,8 @@ plus goals and open questions, then expand to Detailed via **detail-feature**.
 
 ## Index
 
-Sequencing, dependencies, and the v1 definition of done live in
-[000-completion-roadmap.md](000-completion-roadmap.md) — read it before picking a doc.
+Sequencing lives in [000-completion-roadmap.md](000-completion-roadmap.md):
+**§3 waves are merge-gates**; **§8 is the parallel ship plan** (schema bootstrap, four lanes, file ownership, first four `ship-feature` prompts).
 
 | Doc | Feature | Wave | Status |
 |-----|---------|------|--------|

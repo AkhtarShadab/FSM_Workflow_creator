@@ -18,8 +18,8 @@ models or tools, the canvas is persisted only in `localStorage`, BYOK keys are n
 encrypted at rest, and export produces a JSON file rather than a runnable harness.
 
 [FeatureShipping/000-completion-roadmap.md](FeatureShipping/000-completion-roadmap.md)
-is the ordered plan to v1 — five waves, eleven feature docs, all **Detailed** and
-ready for `ship-feature`.
+is the ordered plan to v1. Waves are **merge-gates**; **§8** is how to ship in
+parallel (schema bootstrap, then four concurrent `ship-feature` lanes).
 
 ## Documentation
 

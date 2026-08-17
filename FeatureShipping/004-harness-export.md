@@ -3,7 +3,7 @@
 > Status: **Detailed**
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §11 · Roadmap Wave 3
 > Code today: [`export-wizard.tsx`](../apps/web/src/components/export/export-wizard.tsx) — selectors are UI-only, the compose panel is a static string, only `fsm.json` downloads; `export_jobs` is never written
-> Depends on: [009](009-canvas-persistence.md), [010](010-tool-runtime-grpc.md) · Implement with: **ship-feature** (Composer/Grok)
+> **Parallel:** X1 starts immediately. X2 waits for [009](009-canvas-persistence.md) P3. X4 waits for [010](010-tool-runtime-grpc.md) G2.
 
 ---
 
@@ -77,8 +77,7 @@ Rework [`export-wizard.tsx`](../apps/web/src/components/export/export-wizard.tsx
 | X1 | `packages/export-engine/` (new) | `generateHarness`, template set, `manifest.json`, determinism helpers |
 | X1 | `harness-templates/` (new) | Controller, compose, Dockerfiles, README templates |
 | X2 | `apps/web/src/app/api/projects/[id]/export/route.ts` (new) | Streaming ZIP; writes an `export_jobs` row |
-| X2 | `src/db/schema.ts`, `migrations/*` | `export_jobs` gains `content_hash`, `size_bytes`, `error` |
-| X2 | `src/components/export/export-wizard.tsx` | Four-step wizard on real data; export history |
+| X2 | `src/components/export/export-wizard.tsx` | Four-step wizard on real data; export history (`export_jobs` columns already in SB0) |
 | X3 | `src/lib/export/git-push.ts` (new) | `isomorphic-git` push with a PAT from the 005 envelope |
 | X4 | `.github/workflows/ci.yml` | Smoke job: generate from a fixture → `docker compose up` → assert the run completes |
 

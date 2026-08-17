@@ -76,8 +76,7 @@ Reuse the existing run SSE channel with a second, app-scoped stream at `GET /api
 
 | Phase | Touch | Change |
 |-------|-------|--------|
-| N1 | `src/db/schema.ts`, `migrations/*` | `notifications` table + indexes |
-| N1 | `src/lib/notifications/emit.ts` (new) | `notify()` with dedupe |
+| N1 | `src/lib/notifications/emit.ts` (new) | `notify()` with dedupe (`notifications` already in SB0) |
 | N1 | `src/app/notifications/actions.ts` (new) | `listNotifications`, `getUnreadCount`, `markRead`, `markAllRead`, `clearRead` |
 | N2 | `src/components/notifications/notification-bell.tsx` (new), app shell | Bell, unread badge, recent popover |
 | N2 | `src/app/notifications/page.tsx` (new) | Inbox with filters |
@@ -108,7 +107,7 @@ Reuse the existing run SSE channel with a second, app-scoped stream at `GET /api
 
 | Phase | Scope | Size |
 |-------|-------|------|
-| N1 | Schema + `notify()` + query actions | 1 PR |
+| N1 | `notify()` + query actions (table already in SB0) | 1 PR |
 | N2 | Bell, inbox page, live tile | 1 PR |
 | N3 | Emission wiring + SSE badge | 1 PR |
 | N4 | Optional webhook sink | 1 PR |

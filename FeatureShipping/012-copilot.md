@@ -3,7 +3,7 @@
 > Status: **Detailed**
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §10.4, P9 · Roadmap Wave 4
 > Code today: [`copilot-panel.tsx`](../apps/web/src/components/copilot/copilot-panel.tsx) — regex keyword matching, random node placement, self-labelled "online · stub mode"
-> Depends on: [003](003-live-executors.md) (gateway) · Implement with: **ship-feature** (Composer/Grok)
+> **Parallel:** CP1 starts immediately (pure reducer). CP2 waits for [003](003-live-executors.md) gateway.
 
 ---
 

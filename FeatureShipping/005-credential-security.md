@@ -86,8 +86,7 @@ Schema delta on `credentials`: add `last4 TEXT NOT NULL`, `active INTEGER NOT NU
 | Phase | Touch | Change |
 |-------|-------|--------|
 | S2 | `src/lib/crypto/envelope.ts` (new) | `seal` / `open` / `isSealed`, boot check for `PLATFORM_SECRET` |
-| S2 | `src/db/schema.ts`, `migrations/*` | `last4`, `active`, `models_json`, discovery columns, `revoked_at` |
-| S2 | `src/app/settings/credentials/actions.ts` (new) | CRUD returning redacted summaries |
+| S2 | `src/app/settings/credentials/actions.ts` (new) | CRUD returning redacted summaries (columns already in SB0) |
 | S2 | `src/lib/credentials/server.ts` (new) | `getDecryptedKey`, `server-only` guard |
 | S2 | `src/app/api/credentials/discover/route.ts` | Accept `{ credentialId }`; drop `apiKey` from the request body |
 | S3 | `src/stores/credential-store.ts` | v2 migration that strips `apiKey`; summaries only |
@@ -117,7 +116,7 @@ Schema delta on `credentials`: add `last4 TEXT NOT NULL`, `active INTEGER NOT NU
 | Phase | Scope | Size |
 |-------|-------|------|
 | S1 | SSRF / host validation on discovery | **Shipped** (PR #3) |
-| S2 | Envelope + schema + server CRUD + discovery by `credentialId` | 1 PR |
+| S2 | Envelope + server CRUD + discovery by `credentialId` (columns already in SB0) | 1 PR |
 | S3 | Client store scrub + write-only UI + rotate/revoke | 1 PR |
 
 ## Test plan

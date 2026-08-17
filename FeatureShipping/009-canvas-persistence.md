@@ -83,7 +83,7 @@ label: text("label"),                          // optional human tag
 
 | Phase | Touch | Change |
 |-------|-------|--------|
-| P1 | `src/db/schema.ts`, `src/db/migrations/*` | `fsm_drafts` table; `content_hash` + `label` on `fsm_definitions`; unique `(project_id, version)` |
+| SB0 | `src/db/schema.ts`, `src/db/migrations/*` | Owned by the [roadmap schema bootstrap](000-completion-roadmap.md#83-kickoff-schema-bootstrap-sb0) — do not repeat here |
 | P1 | `src/lib/canonical-json.ts` (new) | `canonicalJson()` + `contentHash()` |
 | P1 | `src/app/project/[id]/actions.ts` (new) | `saveDraft`, `loadDraft`, `publishVersion`, `listVersions` |
 | P2 | `src/stores/canvas-store.ts` | `syncStatus`, `scheduleSave`, persist v2 migration, server-wins hydration |
@@ -114,7 +114,7 @@ label: text("label"),                          // optional human tag
 
 | Phase | Scope | Size |
 |-------|-------|------|
-| P1 | Schema + canonical hash + draft/publish actions | 1 PR |
+| P1 | Canonical hash + draft/publish actions (tables already in SB0) | 1 PR |
 | P2 | Canvas store autosave + toolbar sync badge | 1 PR |
 | P3 | Version history dialog + runs use published versions | 1 PR |
 | P4 | Real run history + event drill-down | 1 PR |

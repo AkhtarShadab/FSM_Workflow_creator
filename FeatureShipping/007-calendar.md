@@ -71,8 +71,7 @@ Stored per schedule as an IANA name, defaulting to UTC, and displayed in the vie
 
 | Phase | Touch | Change |
 |-------|-------|--------|
-| Cal1 | `src/db/schema.ts`, `migrations/*` | `schedules` table + `(enabled, next_run_at)` index; `runs.triggeredBy` (`manual` \| `schedule`) + `scheduleId` |
-| Cal1 | `src/lib/schedule/cron.ts` (new) | `nextOccurrence(expr, tz, from)`, `describeCron(expr)`, validation |
+| Cal1 | `src/lib/schedule/cron.ts` (new) | `nextOccurrence(expr, tz, from)`, `describeCron(expr)`, validation (`schedules` already in SB0) |
 | Cal1 | `src/app/project/[id]/calendar/actions.ts` (new) | `createSchedule`, `updateSchedule`, `deleteSchedule`, `toggleSchedule`, `listSchedules`, `runNow` |
 | Cal2 | `src/app/project/[id]/calendar/page.tsx`, `src/components/calendar/*` (new) | Month grid, upcoming list, schedule dialog |
 | Cal2 | `src/app/page.tsx` | Live Calendar tile |
@@ -105,7 +104,7 @@ Stored per schedule as an IANA name, defaulting to UTC, and displayed in the vie
 
 | Phase | Scope | Size |
 |-------|-------|------|
-| Cal1 | Schema + cron math + CRUD actions | 1 PR |
+| Cal1 | Cron math + CRUD actions (table already in SB0) | 1 PR |
 | Cal2 | Calendar UI, schedule dialog, live tile | 1 PR |
 | Cal3 | Ticker, claim/lease, notifications, external tick endpoint | 1 PR |
 

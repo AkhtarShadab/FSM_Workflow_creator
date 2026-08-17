@@ -871,8 +871,10 @@ jobs:
 ### 16.1 Completion plan (v1)
 
 Phases 3–5 above are decomposed into eleven FeatureShipping docs, all **Detailed**.
-Sequencing, the dependency graph, and the definition of done live in
-[FeatureShipping/000-completion-roadmap.md](FeatureShipping/000-completion-roadmap.md).
+Sequencing lives in
+[FeatureShipping/000-completion-roadmap.md](FeatureShipping/000-completion-roadmap.md):
+§3 waves are merge-gates; **§8 parallel lanes** are how work actually ships
+(schema bootstrap SB0, then four concurrent `ship-feature` sessions).
 
 | Wave | Docs | Gate to exit |
 |------|------|--------------|

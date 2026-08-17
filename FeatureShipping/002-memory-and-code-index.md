@@ -174,9 +174,7 @@ Top-level tabs: **Graph** | **Code Index**
 
 | Phase | Touch | Change |
 |-------|-------|--------|
-| M1 | `apps/web/src/db/schema.ts` | Add `codeSymbols` table + types |
-| M1 | `apps/web/src/db/migrations/*` | Drizzle generate/migrate |
-| M1 | `apps/web/src/app/memory/actions.ts` (or `code-index/actions.ts`) | `upsertSymbols`, `searchByIntent`, `searchByPath`, `lookupIdentity`, `getIndexStats` |
+| M1 | `apps/web/src/app/memory/actions.ts` (or `code-index/actions.ts`) | `upsertSymbols`, `searchByIntent`, `searchByPath`, `lookupIdentity`, `getIndexStats` (table already in SB0) |
 | M2 | `apps/web/src/components/memory/memory-view.tsx` | Shell with Graph / Code Index tabs; Graph embeds current view |
 | M2 | `apps/web/src/components/memory/code-index-view.tsx` (new) | Tree + list + detail + status bar (empty/mock data OK) |
 | M2 | `apps/web/src/app/memory/page.tsx` | Pass project filter; tab routing via query `?mode=index` |
@@ -225,7 +223,7 @@ Top-level tabs: **Graph** | **Code Index**
 
 | Phase | Scope | Model lane |
 |-------|--------|------------|
-| M1 | Schema + search/CRUD actions | Composer/Grok via `ship-feature` |
+| M1 | Search/CRUD actions (`code_symbols` already in SB0) | Composer/Grok via `ship-feature` |
 | M2 | Memory studio tabs + Code Index shell | Composer/Grok |
 | M3 | TS indexer MVP + wizard/progress | Composer/Grok |
 | M4 | Intent enrichment + staleness | Composer/Grok |

@@ -3,7 +3,7 @@
 > Status: **Detailed**
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §§6, 9 · Roadmap Wave 1
 > Code today: [`run-engine.ts`](../apps/web/src/lib/run-engine.ts) `stubExecute`, [`runs/route.ts`](../apps/web/src/app/api/projects/[id]/runs/route.ts) (blocking POST)
-> Depends on: [009](009-canvas-persistence.md), [005](005-credential-security.md), [006](006-ci-pipeline.md) · Implement with: **ship-feature** (Composer/Grok)
+> Depends on: [005](005-credential-security.md) S2 for live keys (E1 runs under `FSM_MOCK_PROVIDER=1` without it) · [009](009-canvas-persistence.md) P3 to run published versions (E1 may snapshot per run until then) · [006](006-ci-pipeline.md) CI3 for Playwright in CI
 
 ---
 
@@ -119,8 +119,7 @@ human_tasks: { id, runId, stateId, prompt, assignee?, status: "pending"|"approve
 | E1 | `src/lib/executors/ai.ts` (new), `src/lib/run-engine.ts` | Real AI executor; delete `stubExecute` |
 | E2 | `src/lib/executors/http.ts`, `validate.ts` (new) | HTTP with templating/timeout/retry; Ajv validation |
 | E2 | `src/components/runs/runs-view.tsx` | SSE subscription, live log, cancel |
-| E3 | `src/db/schema.ts`, `migrations/*` | `human_tasks`; `runs.status` gains `awaiting_human` / `cancelled` / `interrupted` |
-| E3 | `src/app/api/runs/[runId]/human/[taskId]/route.ts` (new), `human-task-card.tsx` (new) | Approval bridge |
+| E3 | `src/app/api/runs/[runId]/human/[taskId]/route.ts` (new), `human-task-card.tsx` (new) | Approval bridge (`human_tasks` already in SB0) |
 | E4 | `packages/byok-gateway/adapters/anthropic.ts` | Anthropic + OpenAI-compatible; per-state credential binding end to end |
 
 ## Edge cases & failure modes

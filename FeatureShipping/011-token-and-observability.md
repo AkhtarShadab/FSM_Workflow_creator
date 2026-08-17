@@ -86,8 +86,7 @@ Structured logs (`runId`, `stateId`, `kind`, `durationMs`, never key material) a
 |-------|-------|--------|
 | T1 | `src/lib/context/phase-map.ts` (new) | Phase-map builder with token cap |
 | T1 | `src/lib/run-supervisor.ts` | Inject the phase map before the first AI state |
-| T2 | `src/db/schema.ts`, `migrations/*` | `checkpoints` table; index on `(run_id, state_id)` |
-| T2 | `src/lib/context/checkpoint.ts` (new) | Dehydrate / mask swap / hydrate; `template` + `llm` summarizers |
+| T2 | `src/lib/context/checkpoint.ts` (new) | Dehydrate / mask swap / hydrate; `template` + `llm` summarizers (`checkpoints` already in SB0) |
 | T2 | `packages/fsm-engine/src/mask.ts` | Expose the runtime tool-schema swap the supervisor calls |
 | T3 | `src/lib/context/ledger.ts`, `src/lib/context/model-pricing.ts` (new) | Accumulate usage, cost table, `estimated` flag |
 | T3 | `src/lib/executors/ai.ts` | Report billed usage into the ledger |
@@ -121,7 +120,7 @@ Structured logs (`runId`, `stateId`, `kind`, `durationMs`, never key material) a
 | Phase | Scope | Size |
 |-------|-------|------|
 | T1 | Phase map + State 0 injection | 1 PR |
-| T2 | Checkpoint table + dehydrate/mask/hydrate | 1 PR |
+| T2 | Dehydrate / mask / hydrate (`checkpoints` already in SB0) | 1 PR |
 | T3 | Ledger + pricing + budget enforcement | 1 PR |
 | T4 | Cost heatmap + ledger panel | 1 PR |
 | T5 | Structured logs + optional OTLP | 1 PR |

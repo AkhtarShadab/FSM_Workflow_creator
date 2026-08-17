@@ -3,7 +3,7 @@
 > Status: **Detailed**
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §8 (proto contract, D5/D6) · Roadmap Wave 2
 > Code today: none — `packages/proto` and `packages/grpc-bridge` do not exist; `SCRIPT` states are simulated
-> Depends on: [003](003-live-executors.md) · Blocks: [004](004-harness-export.md) · Implement with: **ship-feature** (Composer/Grok)
+> **Parallel:** G1–G2 start immediately (greenfield packages). G3 waits for [003](003-live-executors.md) E1. G4–G5 follow G2.
 
 ---
 
