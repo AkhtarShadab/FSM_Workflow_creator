@@ -42,6 +42,7 @@ import { useCanvasStore } from "@/stores/canvas-store";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useRegistryStore } from "@/stores/registry-store";
 import { DslPreviewDialog } from "./dsl-preview-dialog";
+import { VersionHistoryDialog } from "./version-history-dialog";
 
 const ICONS: Record<FSMStateType, typeof Play> = {
   START: Play,
@@ -305,6 +306,7 @@ export function CanvasToolbar({
             {versionCount}
           </span>
         </button>
+        <VersionHistoryDialog projectId={projectId} />
         {notice ? (
           <span
             data-testid="import-notice"

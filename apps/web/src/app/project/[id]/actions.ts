@@ -6,6 +6,7 @@ import {
   listVersions as listVersionsRecord,
   loadDraft as loadDraftRecord,
   publishVersion as publishVersionRecord,
+  restoreVersion as restoreVersionRecord,
   saveDraft as saveDraftRecord,
 } from "@/lib/draft-sync";
 import type { CanvasData } from "@/lib/fsm-types";
@@ -34,4 +35,10 @@ export async function publishVersion(projectId: number, label?: string) {
 
 export async function listVersions(projectId: number) {
   return listVersionsRecord(db, projectId);
+}
+
+export async function restoreVersion(projectId: number, versionId: number) {
+  const result = await restoreVersionRecord(db, projectId, versionId);
+  revalidatePath(`/project/${projectId}`);
+  return result;
 }

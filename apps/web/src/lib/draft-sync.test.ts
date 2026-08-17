@@ -11,6 +11,7 @@ import {
   listVersions,
   loadDraft,
   publishVersion,
+  restoreVersion,
   saveDraft,
   type PersistenceDb,
 } from "@/lib/draft-sync";
@@ -243,6 +244,47 @@ describe("publishVersion / listVersions", () => {
     const projectId = await seedProject(db);
     await expect(publishVersion(db, projectId)).rejects.toMatchObject({
       code: "NO_DRAFT",
+    });
+  });
+});
+
+describe("restoreVersion", () => {
+  it("copies version canvas into the draft and does not mutate history", async () => {
+    const db = await createTestDb();
+    const projectId = await seedProject(db);
+
+    await saveDraft(db, projectId, canvas("one", 10), 0);
+    const v1 = await publishVersion(db, projectId, "first");
+
+    await saveDraft(db, projectId, canvas("two", 99), 1);
+    const v2 = await publishVersion(db, projectId, "second");
+
+    const restored = await restoreVersion(db, projectId, v1.id);
+    expect(restored.revision).toBe(3);
+    expect(restored.canvas.nodes[0]?.data.label).toBe("one");
+    expect(restored.canvas.nodes[0]?.position.x).toBe(10);
+
+    const draft = await loadDraft(db, projectId);
+    expect(draft?.canvas.nodes[0]?.data.label).toBe("one");
+    expect(draft?.canvas.nodes[0]?.position.x).toBe(10);
+
+    const versions = await listVersions(db, projectId);
+    expect(versions).toHaveLength(2);
+    expect(versions.map((row) => row.id).sort()).toEqual(
+      [v1.id, v2.id].sort((a, b) => a - b)
+    );
+    expect(versions.find((row) => row.id === v1.id)?.label).toBe("first");
+    expect(versions.find((row) => row.id === v2.id)?.label).toBe("second");
+  });
+
+  it("rejects VERSION_MISSING for another project's row", async () => {
+    const db = await createTestDb();
+    const a = await seedProject(db, "A");
+    const b = await seedProject(db, "B");
+    await saveDraft(db, a, canvas("keep"), 0);
+    const published = await publishVersion(db, a);
+    await expect(restoreVersion(db, b, published.id)).rejects.toMatchObject({
+      code: "VERSION_MISSING",
     });
   });
 });

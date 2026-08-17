@@ -13,6 +13,7 @@ import {
   listVersions,
   loadDraft,
   publishVersion,
+  restoreVersion,
   saveDraft,
 } from "@/app/project/[id]/actions";
 import {
@@ -115,6 +116,10 @@ interface CanvasStore {
   reloadFromServer: (projectId: string) => Promise<void>;
   overwriteServer: (projectId: string) => Promise<void>;
   publishProject: (projectId: string, label?: string) => Promise<void>;
+  restoreProjectVersion: (
+    projectId: string,
+    versionId: number
+  ) => Promise<void>;
   clearNotice: () => void;
 }
 
@@ -581,6 +586,24 @@ export const useCanvasStore = create<CanvasStore>()(
         set((s) => ({
           versionCounts: { ...s.versionCounts, [projectId]: versions.length },
           syncStatus: s.syncStatus === "idle" ? "saved" : s.syncStatus,
+        }));
+      },
+
+      restoreProjectVersion: async (projectId, versionId) => {
+        debouncer.cancel(projectId);
+        queued.delete(projectId);
+        await waitForInflight(projectId);
+        const result = await restoreVersion(
+          numericProjectId(projectId),
+          versionId
+        );
+        set((s) => ({
+          ...setCanvas(s, projectId, result.canvas),
+          revisions: { ...s.revisions, [projectId]: result.revision },
+          lastSyncedAt: { ...s.lastSyncedAt, [projectId]: Date.now() },
+          syncStatus: "saved",
+          selectedNodeId: null,
+          selectedEdgeId: null,
         }));
       },
 

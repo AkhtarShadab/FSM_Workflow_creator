@@ -15,7 +15,8 @@ export type PersistenceErrorCode =
   | "STALE_REVISION"
   | "DRAFT_TOO_LARGE"
   | "PROJECT_MISSING"
-  | "NO_DRAFT";
+  | "NO_DRAFT"
+  | "VERSION_MISSING";
 
 export class PersistenceError extends Error {
   readonly code: PersistenceErrorCode;
@@ -57,6 +58,34 @@ async function requireProject(
   if (!project) {
     throw new PersistenceError("PROJECT_MISSING");
   }
+}
+
+export function isCanvasData(value: unknown): value is CanvasData {
+  if (!value || typeof value !== "object") return false;
+  const rec = value as { nodes?: unknown; edges?: unknown };
+  return Array.isArray(rec.nodes) && Array.isArray(rec.edges);
+}
+
+/**
+ * Published `fsm_definitions.json` is the canonical DSL plus a `canvas`
+ * snapshot so restore can copy the authored graph back into the draft
+ * without mutating history.
+ */
+export function canvasFromPublishedJson(json: string): CanvasData {
+  const parsed = JSON.parse(json) as unknown;
+  if (isCanvasData(parsed)) return parsed;
+  if (parsed && typeof parsed === "object") {
+    const nested = (parsed as { canvas?: unknown }).canvas;
+    if (isCanvasData(nested)) return nested;
+  }
+  throw new PersistenceError(
+    "NO_DRAFT",
+    "Published version has no canvas snapshot to restore."
+  );
+}
+
+function publishedJson(dsl: unknown, canvas: CanvasData): string {
+  return canonicalJson({ ...(dsl as Record<string, unknown>), canvas });
 }
 
 function serializedCanvas(canvas: CanvasData): string {
@@ -172,7 +201,7 @@ export async function publishVersion(
     .values({
       projectId,
       version: nextVersion,
-      json: canonicalJson(dsl),
+      json: publishedJson(dsl, draft.canvas),
       contentHash: hash,
       label: label ?? null,
     })
@@ -191,4 +220,41 @@ export async function listVersions(
     .where(eq(fsmDefinitions.projectId, projectId))
     .orderBy(desc(fsmDefinitions.version));
   return rows.map(toVersionRow);
+}
+
+export async function getLatestVersion(
+  db: PersistenceDb,
+  projectId: number
+): Promise<VersionRow | null> {
+  const [latest] = await db
+    .select()
+    .from(fsmDefinitions)
+    .where(eq(fsmDefinitions.projectId, projectId))
+    .orderBy(desc(fsmDefinitions.version))
+    .limit(1);
+  return latest ? toVersionRow(latest) : null;
+}
+
+export async function restoreVersion(
+  db: PersistenceDb,
+  projectId: number,
+  versionId: number
+): Promise<{ canvas: CanvasData; revision: number }> {
+  await requireProject(db, projectId);
+
+  const [row] = await db
+    .select()
+    .from(fsmDefinitions)
+    .where(
+      and(eq(fsmDefinitions.id, versionId), eq(fsmDefinitions.projectId, projectId))
+    )
+    .limit(1);
+  if (!row) {
+    throw new PersistenceError("VERSION_MISSING");
+  }
+
+  const canvas = canvasFromPublishedJson(row.json);
+  const draft = await loadDraft(db, projectId);
+  const saved = await saveDraft(db, projectId, canvas, draft?.revision ?? 0);
+  return { canvas, revision: saved.revision };
 }

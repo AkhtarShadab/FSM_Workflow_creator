@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { fsmDefinitions, runEvents, runs } from "@/db/schema";
+import { runEvents, runs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
   runFsm,
@@ -8,7 +8,14 @@ import {
 } from "@fsm/engine";
 import type { CanvasData } from "@/lib/fsm-types";
 import { normalizeSpawn } from "@/lib/fsm-types";
-import { canvasToDsl } from "@/lib/canvas-to-dsl";
+import {
+  getLatestVersion,
+  loadDraft,
+  PersistenceError,
+  publishVersion,
+  saveDraft,
+  type PersistenceDb,
+} from "@/lib/draft-sync";
 
 function canvasToEngine(canvas: CanvasData): {
   states: EngineState[];
@@ -108,20 +115,40 @@ async function stubExecute(args: {
 }
 
 /**
- * Persist FSM snapshot, execute with @fsm/engine, write run_events.
+ * Bind a run to a published fsm_definitions row, then execute with @fsm/engine.
+ * Uses the project's latest published version when one exists; otherwise
+ * publishes the current draft (saving the run canvas first) and runs that.
  */
-export async function startProjectRun(projectId: number, canvas: CanvasData) {
-  // Persist the versioned FSM DSL (§10.2), not the raw React Flow canvas —
-  // consumers of fsm_definitions.json expect the exported schema.
-  const dsl = JSON.stringify(canvasToDsl(canvas));
-  const [fsm] = await db
-    .insert(fsmDefinitions)
-    .values({ projectId, version: 1, json: dsl })
-    .returning();
+export async function resolveRunFsmId(
+  database: PersistenceDb,
+  projectId: number,
+  canvas: CanvasData
+): Promise<number> {
+  const latest = await getLatestVersion(database, projectId);
+  if (latest) return latest.id;
 
-  const [run] = await db
+  const draft = await loadDraft(database, projectId);
+  try {
+    await saveDraft(database, projectId, canvas, draft?.revision ?? 0);
+  } catch (err) {
+    if (!(err instanceof PersistenceError && err.code === "STALE_REVISION")) {
+      throw err;
+    }
+  }
+  const published = await publishVersion(database, projectId);
+  return published.id;
+}
+
+export async function startProjectRunOn(
+  database: PersistenceDb,
+  projectId: number,
+  canvas: CanvasData
+) {
+  const fsmId = await resolveRunFsmId(database, projectId, canvas);
+
+  const [run] = await database
     .insert(runs)
-    .values({ fsmId: fsm.id, status: "running" })
+    .values({ fsmId, status: "running" })
     .returning();
 
   const { states, edges } = canvasToEngine(canvas);
@@ -133,7 +160,7 @@ export async function startProjectRun(projectId: number, canvas: CanvasData) {
   });
 
   for (const ev of result.events) {
-    await db.insert(runEvents).values({
+    await database.insert(runEvents).values({
       runId: run.id,
       stateId: ev.stateId,
       kind: ev.kind,
@@ -144,7 +171,7 @@ export async function startProjectRun(projectId: number, canvas: CanvasData) {
     });
   }
 
-  await db
+  await database
     .update(runs)
     .set({
       status: result.status === "succeeded" ? "succeeded" : "failed",
@@ -154,9 +181,14 @@ export async function startProjectRun(projectId: number, canvas: CanvasData) {
 
   return {
     runId: run.id,
+    fsmId,
     status: result.status,
     events: result.events,
     error: result.error,
     aggregate: result.aggregate,
   };
+}
+
+export async function startProjectRun(projectId: number, canvas: CanvasData) {
+  return startProjectRunOn(db, projectId, canvas);
 }
