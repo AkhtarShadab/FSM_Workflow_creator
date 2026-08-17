@@ -17,8 +17,6 @@ import {
   type CredentialSummary,
 } from "@/lib/credentials/types";
 
-export type { CredentialSummary, CredentialProvider };
-
 function revalidateCredentials(): void {
   revalidatePath("/settings/credentials");
 }

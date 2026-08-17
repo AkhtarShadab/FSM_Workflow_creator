@@ -3,6 +3,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  createCredential as createCredentialAction,
+  listCredentials,
+  rotateCredential as rotateCredentialAction,
+  revokeCredential as revokeCredentialAction,
+} from "@/app/settings/credentials/actions";
+import {
   asCredentialProvider,
   type CredentialProvider,
   type CredentialSummary,
@@ -189,9 +195,6 @@ export const useCredentialStore = create<CredentialStore>()(
 
       hydrate: async () => {
         try {
-          const { listCredentials } = await import(
-            "@/app/settings/credentials/actions"
-          );
           const list = await listCredentials();
           const credentials = list.map(pickSummaryFields);
           set((state) => ({
@@ -206,10 +209,7 @@ export const useCredentialStore = create<CredentialStore>()(
       },
 
       addCredential: async (input) => {
-        const { createCredential } = await import(
-          "@/app/settings/credentials/actions"
-        );
-        const summary = pickSummaryFields(await createCredential(input));
+        const summary = pickSummaryFields(await createCredentialAction(input));
         set((state) => {
           const credentials = [
             summary,
@@ -224,21 +224,15 @@ export const useCredentialStore = create<CredentialStore>()(
       },
 
       rotateCredential: async (id, newApiKey) => {
-        const { rotateCredential } = await import(
-          "@/app/settings/credentials/actions"
-        );
         const summary = pickSummaryFields(
-          await rotateCredential(id, newApiKey)
+          await rotateCredentialAction(id, newApiKey)
         );
         get().upsertCredential(summary);
         return summary;
       },
 
       revokeCredential: async (id) => {
-        const { revokeCredential } = await import(
-          "@/app/settings/credentials/actions"
-        );
-        const summary = pickSummaryFields(await revokeCredential(id));
+        const summary = pickSummaryFields(await revokeCredentialAction(id));
         set((state) => ({
           credentials: state.credentials.map((c) =>
             c.id === id ? summary : c

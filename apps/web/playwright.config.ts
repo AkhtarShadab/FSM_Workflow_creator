@@ -12,6 +12,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     ...devices["Desktop Chrome"],
+    channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
     baseURL: BASE,
     trace: "on-first-retry",
   },
