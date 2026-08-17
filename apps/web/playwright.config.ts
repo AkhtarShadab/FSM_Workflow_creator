@@ -18,9 +18,18 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
     ? undefined
     : {
-        command: "pnpm run dev",
+        command: `pnpm exec next dev -p ${PORT}`,
         url: BASE,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] != null
+            )
+          ),
+          PORT: String(PORT),
+          PLAYWRIGHT_PORT: String(PORT),
+        },
       },
 });
