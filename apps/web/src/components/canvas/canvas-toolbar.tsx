@@ -97,6 +97,7 @@ export function CanvasToolbar({
                       key={type}
                       type="button"
                       title={meta.tooltip}
+                      data-testid={`palette-add-${type}`}
                       onClick={() => handleAdd(type)}
                       className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-foreground/5"
                     >

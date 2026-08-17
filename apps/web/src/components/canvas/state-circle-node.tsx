@@ -80,6 +80,7 @@ export const StateCircleNode = memo(function StateCircleNode({
         selected && "rotate-0 outline-2 outline-dashed outline-offset-4 outline-[var(--ink)]",
         dimmed && "opacity-40 grayscale"
       )}
+      data-testid={`state-node-${data.stateType}`}
       data-dimmed={dimmed ? "true" : undefined}
     >
       {/* washi tape */}
