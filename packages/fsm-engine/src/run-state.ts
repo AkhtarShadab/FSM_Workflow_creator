@@ -1,9 +1,28 @@
 import type { Emission } from "./signals";
+import {
+  DEFAULT_RETRY_ON,
+  type RetryReason,
+} from "./signals";
+
+export type { RetryReason };
 
 export interface Guardrails {
   timeoutMs: number;
   retryMax: number;
   retryBackoffMs: number;
+  retryOn?: RetryReason[];
+}
+
+const MAX_BACKOFF_MS = 30_000;
+
+export function resolveRetryOn(guardrails: Guardrails): RetryReason[] {
+  return guardrails.retryOn ?? DEFAULT_RETRY_ON;
+}
+
+/** Exponential backoff: base * 2^(attempt-1), capped at 30s. */
+export function retryBackoffMs(guardrails: Guardrails, attempt: number): number {
+  const base = guardrails.retryBackoffMs;
+  return Math.min(base * 2 ** (attempt - 1), MAX_BACKOFF_MS);
 }
 
 export interface RunStateSpec {
@@ -50,9 +69,22 @@ export type RunStateResult =
       ok: false;
       emission: Emission;
       attempts: number;
-      reason: "input_schema" | "output_schema" | "timeout" | "execute" | "aborted";
+      reason:
+        | "input_schema"
+        | "output_schema"
+        | "timeout"
+        | "execute"
+        | "verify_fail"
+        | "tool_denied"
+        | "aborted";
       error?: string;
     };
+
+export interface RunStateOptions {
+  clock?: Clock;
+  abortSignal?: AbortSignal;
+  onRetry?: (info: { attempt: number; reason: RetryReason }) => void;
+}
 
 function validateAgainstSchema(value: unknown, schema: unknown): boolean {
   if (schema == null || schema === "") return true;
@@ -70,15 +102,34 @@ function validateAgainstSchema(value: unknown, schema: unknown): boolean {
   return true;
 }
 
+async function scheduleRetry(
+  reason: RetryReason,
+  attempt: number,
+  maxAttempts: number,
+  guardrails: Guardrails,
+  retryOn: RetryReason[],
+  clock: Clock,
+  abortSignal: AbortSignal | undefined,
+  onRetry: RunStateOptions["onRetry"]
+): Promise<boolean> {
+  if (attempt >= maxAttempts || !retryOn.includes(reason)) {
+    return false;
+  }
+  onRetry?.({ attempt, reason });
+  await clock.sleep(retryBackoffMs(guardrails, attempt), abortSignal);
+  return true;
+}
+
 /**
  * Enter → execute (with retries/timeout) → verify output → emit.
  */
 export async function runState(
   spec: RunStateSpec,
   inputPayload: unknown,
-  opts: { clock?: Clock; abortSignal?: AbortSignal } = {}
+  opts: RunStateOptions = {}
 ): Promise<RunStateResult> {
   const clock = opts.clock ?? defaultClock;
+  const retryOn = resolveRetryOn(spec.guardrails);
 
   if (!validateAgainstSchema(inputPayload, spec.inputSchema)) {
     return {
@@ -122,7 +173,6 @@ export async function runState(
       clearTimeout(timer);
       opts.abortSignal?.removeEventListener("abort", onAbort);
 
-      // Optional output schema on structured emissions with payload
       const outPayload =
         typeof emission === "object" && emission && "payload" in emission
           ? emission.payload
@@ -130,8 +180,18 @@ export async function runState(
 
       if (!validateAgainstSchema(outPayload, spec.outputSchema)) {
         lastError = "output schema validation failed";
-        if (attempt < maxAttempts) {
-          await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
+        if (
+          await scheduleRetry(
+            "output_schema",
+            attempt,
+            maxAttempts,
+            spec.guardrails,
+            retryOn,
+            clock,
+            opts.abortSignal,
+            opts.onRetry
+          )
+        ) {
           continue;
         }
         return {
@@ -149,22 +209,19 @@ export async function runState(
       opts.abortSignal?.removeEventListener("abort", onAbort);
       lastError = err instanceof Error ? err.message : String(err);
 
-      if (timedOut) {
-        if (attempt < maxAttempts) {
-          await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
-          continue;
-        }
-        return {
-          ok: false,
-          emission: spec.onErrorSignal,
-          attempts: attempt,
-          reason: "timeout",
-          error: lastError,
-        };
-      }
-
-      if (attempt < maxAttempts) {
-        await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
+      const reason: RetryReason = timedOut ? "timeout" : "execute";
+      if (
+        await scheduleRetry(
+          reason,
+          attempt,
+          maxAttempts,
+          spec.guardrails,
+          retryOn,
+          clock,
+          opts.abortSignal,
+          opts.onRetry
+        )
+      ) {
         continue;
       }
 
@@ -172,7 +229,7 @@ export async function runState(
         ok: false,
         emission: spec.onErrorSignal,
         attempts: attempt,
-        reason: "execute",
+        reason,
         error: lastError,
       };
     }

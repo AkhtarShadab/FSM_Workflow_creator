@@ -13,6 +13,36 @@ export interface ParsedSignal {
   toHint?: string;
 }
 
+export type RetryReason =
+  | "timeout"
+  | "execute"
+  | "output_schema"
+  | "verify_fail"
+  | "tool_denied";
+
+export const DEFAULT_RETRY_ON: RetryReason[] = [
+  "timeout",
+  "execute",
+  "output_schema",
+];
+
+/** Format `::STATE.*` lifecycle signals (013 §2.1, 014 R1). */
+export function formatStateEnter(stateId: string, attempt = 1): string {
+  return `::STATE.ENTER|stateId=${stateId}|attempt=${attempt}`;
+}
+
+export function formatStateRetry(attempt: number, reason: RetryReason): string {
+  return `::STATE.RETRY|attempt=${attempt}|reason=${reason}`;
+}
+
+export function formatStateSuccess(): string {
+  return "::STATE.SUCCESS";
+}
+
+export function formatStateFail(reason?: string): string {
+  return reason ? `::STATE.FAIL|reason=${reason}` : "::STATE.FAIL";
+}
+
 /**
  * Parse `::SCOPE.EVENT|key=value` grammar or a structured emission object.
  */
