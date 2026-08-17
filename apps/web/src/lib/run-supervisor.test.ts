@@ -46,15 +46,17 @@ describe("run supervisor", () => {
     const byState = (id: string) => store.events.filter((e) => e.stateId === id);
     const startEv = byState("S0");
     const startKinds = startEv.map((e) => e.kind);
-    expect(startKinds.slice(0, 3)).toEqual([
+    expect(startKinds.slice(0, 4)).toEqual([
       "state.start",
       "state.output",
+      "run.cursor",
       "state.transition",
     ]);
     const vKinds = byState("V1").map((e) => e.kind);
-    expect(vKinds.slice(0, 3)).toEqual([
+    expect(vKinds.slice(0, 4)).toEqual([
       "state.start",
       "state.output",
+      "run.cursor",
       "state.transition",
     ]);
 

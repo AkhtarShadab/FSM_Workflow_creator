@@ -12,7 +12,12 @@ export function canvasToEngine(canvas: CanvasData): {
       type: n.data.stateType,
       label: n.data.label,
       onErrorSignal: n.data.onError?.signal ?? "::SCRIPT.ERROR",
-      guardrails: n.data.guardrails,
+      guardrails: {
+        timeoutMs: n.data.guardrails.timeoutMs,
+        retryMax: n.data.guardrails.retryMax,
+        retryBackoffMs: n.data.guardrails.retryBackoffMs,
+        retryOn: n.data.guardrails.retryOn,
+      },
     };
     if (n.data.inputSchema) {
       try {

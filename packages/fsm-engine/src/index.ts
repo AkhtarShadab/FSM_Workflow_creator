@@ -23,4 +23,13 @@ export {
   type ChildExecutor,
   type ChildContext,
 } from "./spawn-pool";
-export { runFsm, type EngineState, type EngineEvent, type RunFsmResult, type StateExecutor } from "./runner";
+export {
+  runFsm,
+  type BeforeTransitionContext,
+  type BeforeTransitionResult,
+  type EngineState,
+  type EngineEvent,
+  type RunFsmResult,
+  type StateExecutor,
+} from "./runner";
+export type { RetryReason } from "./signals";

@@ -17,9 +17,38 @@ import type {
 import { sanitizeEventPayload } from "@/lib/event-sanitize";
 import { canvasToEngine } from "@/lib/run-engine";
 import {
+  defaultSuccessSignal,
+  dslToEngine,
+  inheritToolsForState,
+  nodesFromDsl,
+  outgoingSignalsForState,
+  parsePayloadRef,
+  payloadToRef,
+  readRetainContext,
+  readSuccessCondition,
+  readToolAccess,
+} from "@/lib/run-contract-helpers";
+import { dropStateMemory, type RunContext } from "@/lib/run-context";
+import {
+  findLatestCursor,
+  resumeFromEvents,
+  RUN_CURSOR_KIND,
+  serializeRunCursor,
+} from "@/lib/run-cursor";
+import {
+  assertToolInAllowlist,
+  mintToolGrant,
+  resolveAllowedTools,
+  TOOL_DENIED_SIGNAL,
+  verifyToolGrant,
+} from "@/lib/tool-grants";
+import { evaluateSuccessCondition } from "@/lib/verify-success";
+import {
   parseSignal,
   runFsm,
+  type BeforeTransitionContext,
   type Emission,
+  type EngineEvent,
   type EngineState,
   type StateExecutor,
 } from "@fsm/engine";
@@ -37,6 +66,7 @@ export type RunStatus =
 export interface RunStore {
   insertEvent(runId: number, draft: RunEventDraft): Promise<PersistedRunEvent>;
   listEventsAfter(runId: number, afterId: number): Promise<PersistedRunEvent[]>;
+  listEvents?(runId: number): Promise<PersistedRunEvent[]>;
   updateRun(
     runId: number,
     patch: { status: RunStatus; endedAt?: Date }
@@ -102,6 +132,9 @@ export function createMemoryRunStore(): RunStore & {
     },
     async listEventsAfter(runId, afterId) {
       return events.filter((e) => e.runId === runId && e.id > afterId);
+    },
+    async listEvents(runId) {
+      return events.filter((e) => e.runId === runId);
     },
     async updateRun(runId, patch) {
       statuses.set(runId, patch.status);
@@ -172,6 +205,14 @@ export const drizzleRunStore: RunStore = {
       .orderBy(asc(runEvents.id));
     return rows.map(hydrateRow);
   },
+  async listEvents(runId) {
+    const rows = await db
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, runId))
+      .orderBy(asc(runEvents.id));
+    return rows.map(hydrateRow);
+  },
   async updateRun(runId, patch) {
     await db
       .update(runs)
@@ -210,11 +251,32 @@ function isOpenRunStatus(status: RunStatus): boolean {
   return status === "running" || status === "awaiting_human" || status === "pending";
 }
 
+async function defaultLoadRunDefinition(
+  runId: number
+): Promise<{ json: string; canvas?: CanvasData } | null> {
+  const [runRow] = await db
+    .select({ fsmId: runs.fsmId })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+  if (!runRow) return null;
+  const [fsmRow] = await db
+    .select({ json: fsmDefinitions.json })
+    .from(fsmDefinitions)
+    .where(eq(fsmDefinitions.id, runRow.fsmId))
+    .limit(1);
+  if (!fsmRow) return null;
+  return { json: fsmRow.json };
+}
+
 export interface SupervisorDeps {
   store?: RunStore;
   bus?: EventBus;
   getExecutor?: (type: string) => Executor;
   humanBridge?: HumanBridge;
+  loadRunDefinition?: (
+    runId: number
+  ) => Promise<{ json: string; canvas?: CanvasData } | null>;
 }
 
 export interface ExecuteRunOptions {
@@ -223,15 +285,44 @@ export interface ExecuteRunOptions {
   edges?: ReturnType<typeof canvasToEngine>["edges"];
   nodesById?: Map<string, { id: string; data: StateNodeData }>;
   executeState?: StateExecutor;
+  initialStateId?: string;
+  initialPayload?: unknown;
+  resumeWithoutCursor?: boolean;
 }
 
 const defaultBus = createEventBus();
+
+function createEmptyRunContext(runId: number): RunContext {
+  return {
+    vars: {},
+    payload: {},
+    history: [],
+    toolLogs: [],
+    ledger: {
+      runId,
+      totals: { tokensIn: 0, tokensOut: 0 },
+      byState: {},
+    },
+  };
+}
+
+function emissionPayload(emission: Emission): Record<string, unknown> {
+  const parsed = parseSignal(emission);
+  return parsed.payload;
+}
+
+function emissionOutput(emission: Emission): unknown {
+  const p = emissionPayload(emission);
+  return "payload" in p ? p.payload ?? p : p;
+}
 
 export function createRunSupervisor(deps: SupervisorDeps = {}) {
   const store = deps.store ?? drizzleRunStore;
   const bus = deps.bus ?? defaultBus;
   const resolveExecutor = deps.getExecutor ?? getExecutor;
   const humanBridge = deps.humanBridge ?? defaultHumanBridge;
+  const loadRunDefinition =
+    deps.loadRunDefinition ?? defaultLoadRunDefinition;
   const registry = new Map<number, ActiveRun>();
 
   function ensureController(runId: number): AbortController {
@@ -268,9 +359,40 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     return event;
   }
 
+  async function listAllEvents(runId: number): Promise<PersistedRunEvent[]> {
+    if (store.listEvents) return store.listEvents(runId);
+    return store.listEventsAfter(runId, -1);
+  }
+
+  function buildToolContext(
+    runId: number,
+    state: EngineState,
+    node: { id: string; data: StateNodeData } | undefined
+  ) {
+    const access = readToolAccess(node?.data);
+    const inherit = inheritToolsForState(node?.data, state.type);
+    const allowedTools = resolveAllowedTools(access, inherit);
+    const timeoutMs = state.guardrails?.timeoutMs ?? 30_000;
+    const exp = Date.now() + timeoutMs + 5_000;
+
+    return {
+      allowedTools,
+      mintGrant: (toolName: string) =>
+        mintToolGrant({ runId, stateId: state.id, toolName, exp }),
+      requireGrant: (toolName: string, grant?: ReturnType<typeof mintToolGrant>) => {
+        assertToolInAllowlist(allowedTools, toolName);
+        const g = grant ?? mintToolGrant({ runId, stateId: state.id, toolName, exp });
+        if (!verifyToolGrant(g)) {
+          assertToolInAllowlist([], toolName);
+        }
+      },
+    };
+  }
+
   function wrapExecute(
     runId: number,
     nodesById: Map<string, { id: string; data: StateNodeData }>,
+    runCtx: RunContext,
     custom?: StateExecutor
   ): StateExecutor {
     return async ({ state, payload, signal }) => {
@@ -283,12 +405,16 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         payload: { type: state.type },
       });
       const started = Date.now();
+      const node = nodesById.get(state.id);
+      const tools = buildToolContext(runId, state, node);
       const ctx: ExecutorContext = {
         runId,
         state,
-        node: nodesById.get(state.id),
-        payload,
+        node,
+        payload: payload,
+        history: runCtx.history,
         signal,
+        tools,
         emit: (draft, opts) => emit(runId, draft, opts).then(() => undefined),
       };
       try {
@@ -305,6 +431,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
           typeof parsed.payload.tokensOut === "number"
             ? parsed.payload.tokensOut
             : null;
+
         await emit(runId, {
           stateId: state.id,
           kind: "state.output",
@@ -313,11 +440,7 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
           tokensIn,
           tokensOut,
         });
-        await emit(runId, {
-          stateId: state.id,
-          kind: "state.transition",
-          payload: { signal: parsed.signal, toHint: parsed.toHint ?? null },
-        });
+
         return emission;
       } catch (err) {
         const aborted =
@@ -334,6 +457,114 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
         throw err;
       }
     };
+  }
+
+  async function onBeforeTransition(
+    runId: number,
+    runCtx: RunContext,
+    nodesById: Map<string, { id: string; data: StateNodeData }>,
+    edges: ReturnType<typeof canvasToEngine>["edges"],
+    ctx: BeforeTransitionContext
+  ) {
+    const node = nodesById.get(ctx.state.id);
+    const parsed = parseSignal(ctx.emission);
+    const condition = readSuccessCondition(node?.data);
+    const verify = await evaluateSuccessCondition(condition, {
+      signal: parsed.signal,
+      payload: emissionOutput(ctx.emission),
+      stateId: ctx.state.id,
+      successSignal: defaultSuccessSignal(ctx.state.type),
+      outgoingSignals: outgoingSignalsForState(ctx.state.id, edges),
+    });
+
+    if (parsed.signal === TOOL_DENIED_SIGNAL) {
+      return {
+        ok: false as const,
+        reason: "tool_denied" as const,
+        failureEmission: ctx.emission,
+      };
+    }
+
+    if (!verify.pass) {
+      const skipRetry =
+        condition.kind === "llm_verify" && condition.onFail === "error_signal";
+      return {
+        ok: false as const,
+        reason: "verify_fail" as const,
+        failureEmission: {
+          signal: "::TRANSITION.VERIFY_FAIL",
+          payload: { reason: verify.reason ?? "verify_fail" },
+        },
+        skipRetry,
+      };
+    }
+
+    const out = emissionOutput(ctx.emission);
+    runCtx.vars[ctx.state.id] = out;
+    runCtx.payload = out;
+    const text =
+      out && typeof out === "object" && "text" in (out as object)
+        ? String((out as { text: unknown }).text ?? "")
+        : "";
+    if (text) {
+      runCtx.history.push({ role: "assistant", content: text });
+    }
+
+    const cursorEvent = serializeRunCursor(ctx.state.id, {
+      lastCompletedStateId: ctx.state.id,
+      lastSignal: parsed.signal,
+      nextStateId: ctx.resolved.to,
+      attempt: ctx.attempts,
+      payloadRef: payloadToRef(out),
+    });
+    await emit(runId, {
+      stateId: ctx.state.id,
+      kind: RUN_CURSOR_KIND,
+      payload: cursorEvent.payload,
+    });
+
+    if (ctx.state.type !== "SYSTEM_FUNCTION") {
+      const retain = readRetainContext(node?.data);
+      const next = dropStateMemory(runCtx, {
+        stateId: ctx.state.id,
+        retainContext: retain,
+      });
+      runCtx.history = next.history;
+      runCtx.toolLogs = next.toolLogs;
+      runCtx.vars = next.vars;
+      runCtx.payload = next.payload;
+    }
+
+    await emit(runId, {
+      stateId: ctx.state.id,
+      kind: "state.transition",
+      payload: { signal: ctx.resolved.signal, toHint: ctx.resolved.to },
+    });
+
+    return { ok: true as const };
+  }
+
+  async function persistEngineEvent(
+    runId: number,
+    event: EngineEvent
+  ): Promise<void> {
+    if (event.kind === "state.enter") return;
+    if (event.kind === "state.success") return;
+    const kind =
+      event.kind === "state.retry"
+        ? "state.retry"
+        : event.kind === "state.fail"
+          ? "state.error"
+          : event.kind;
+    const extra =
+      event.payload && typeof event.payload === "object"
+        ? (event.payload as Record<string, unknown>)
+        : {};
+    await emit(runId, {
+      stateId: event.stateId,
+      kind,
+      payload: { ...extra, message: event.message },
+    });
   }
 
   async function executeRun(
@@ -362,15 +593,38 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
       );
 
     const controller = ensureController(runId);
+    const runCtx = createEmptyRunContext(runId);
+
+    if (opts.initialPayload !== undefined) {
+      runCtx.payload = opts.initialPayload;
+    }
+
+    if (opts.resumeWithoutCursor) {
+      await emit(runId, {
+        stateId: "",
+        kind: "run.resume_without_cursor",
+        payload: { warning: "resume_without_cursor" },
+      });
+    }
 
     const done = (async () => {
       try {
         const result = await runFsm({
           states,
           edges,
-          executeState: wrapExecute(runId, nodesById, opts.executeState),
+          executeState: wrapExecute(
+            runId,
+            nodesById,
+            runCtx,
+            opts.executeState
+          ),
           executeChild: async () => ({ stub: true }),
           abortSignal: controller.signal,
+          initialStateId: opts.initialStateId,
+          initialPayload: opts.initialPayload,
+          onEvent: (ev) => persistEngineEvent(runId, ev),
+          onBeforeTransition: (ctx) =>
+            onBeforeTransition(runId, runCtx, nodesById, edges, ctx),
         });
 
         if (controller.signal.aborted) {
@@ -397,6 +651,16 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
             payload: {},
           });
         } else {
+          const denied = result.events.some(
+            (e) =>
+              e.kind === "state.fail" &&
+              e.payload &&
+              typeof e.payload === "object" &&
+              "emission" in (e.payload as object) &&
+              parseSignal(
+                (e.payload as { emission: Emission }).emission
+              ).signal === TOOL_DENIED_SIGNAL
+          );
           await store.updateRun(runId, {
             status: "failed",
             endedAt: new Date(),
@@ -404,7 +668,10 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
           await emit(runId, {
             stateId: result.finalStateId ?? "",
             kind: "run.failed",
-            payload: { error: result.error ?? "failed" },
+            payload: {
+              error: result.error ?? "failed",
+              toolDenied: denied,
+            },
           });
         }
       } catch (err) {
@@ -483,6 +750,65 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     return { runId: run.id };
   }
 
+  async function resume(
+    runId: number
+  ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+    if (registry.has(runId)) {
+      return { ok: false, error: "ALREADY_RUNNING", status: 409 };
+    }
+    const status = (await store.getRunStatus?.(runId)) ?? null;
+    if (status === "running") {
+      return { ok: false, error: "ALREADY_RUNNING", status: 409 };
+    }
+    if (status !== "interrupted") {
+      return { ok: false, error: "NOT_RESUMABLE", status: 400 };
+    }
+
+    const def = await loadRunDefinition(runId);
+    if (!def) {
+      return { ok: false, error: "RUN_NOT_FOUND", status: 404 };
+    }
+
+    const events = await listAllEvents(runId);
+    const resumeInfo = resumeFromEvents(
+      events.map((e) => ({
+        kind: e.kind,
+        stateId: e.stateId,
+        payload: e.payload,
+      }))
+    );
+
+    const { states, edges } = def.canvas
+      ? canvasToEngine(def.canvas)
+      : dslToEngine(def.json);
+    const nodesById = def.canvas
+      ? new Map(
+          def.canvas.nodes.map((n) => [n.id, { id: n.id, data: n.data }])
+        )
+      : nodesFromDsl(def.json);
+    const byId = new Map(states.map((s) => [s.id, s]));
+    if (resumeInfo.from !== "START" && !byId.has(resumeInfo.from)) {
+      return { ok: false, error: "CURSOR_STATE_MISSING", status: 400 };
+    }
+
+    const initialPayload = resumeInfo.cursor
+      ? parsePayloadRef(resumeInfo.cursor.payloadRef)
+      : {};
+
+    beginRun(runId, {
+      canvas: def.canvas,
+      states,
+      edges,
+      nodesById,
+      initialStateId:
+        resumeInfo.from === "START" ? undefined : resumeInfo.from,
+      initialPayload,
+      resumeWithoutCursor: resumeInfo.warning === "resume_without_cursor",
+    });
+
+    return { ok: true };
+  }
+
   function cancel(runId: number): boolean {
     const active = registry.get(runId);
     if (!active) return false;
@@ -517,15 +843,29 @@ export function createRunSupervisor(deps: SupervisorDeps = {}) {
     return registry.get(runId);
   }
 
+  function getLatestCursor(runId: number) {
+    return listAllEvents(runId).then((events) =>
+      findLatestCursor(
+        events.map((e) => ({
+          kind: e.kind,
+          stateId: e.stateId,
+          payload: e.payload,
+        }))
+      )
+    );
+  }
+
   return {
     start,
     beginRun,
     executeRun,
+    resume,
     cancel,
     resumeHuman,
     subscribe,
     listEventsAfter,
     getActive,
+    getLatestCursor,
     store,
     bus,
     humanBridge,

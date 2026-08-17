@@ -17,6 +17,9 @@ import { credentials } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import type { AIConfig, ExternalAIConfig, StateNodeData } from "@/lib/fsm-types";
 import type { Executor, ExecutorContext } from "./types";
+import {
+  deniedEmission,
+} from "@/lib/tool-grants";
 
 export interface CredentialMaterial {
   key: string;
@@ -179,6 +182,13 @@ async function defaultGetCredential(id: number): Promise<CredentialMaterial> {
   };
 }
 
+const MOCK_TOOL_RE = /INVOKE_TOOL:([^\s]+)/;
+
+function mockToolRequest(systemPrompt: string): string | null {
+  const m = systemPrompt.match(MOCK_TOOL_RE);
+  return m?.[1] ?? null;
+}
+
 export function createAiExecutor(deps: AiExecutorDeps = {}): Executor {
   const isMock = deps.isMock ?? isMockProviderEnabled;
   const getCredential = deps.getCredential ?? defaultGetCredential;
@@ -188,6 +198,16 @@ export function createAiExecutor(deps: AiExecutorDeps = {}): Executor {
     const cfg = aiConfigFromNode(ctx.state.type, ctx.node?.data);
     const ok = successSignal(ctx.state.type);
     const err = errorSignal(ctx.state.type);
+
+    const mockTool = isMock() ? mockToolRequest(cfg.systemPrompt) : null;
+    if (mockTool && ctx.tools) {
+      const allowed = ctx.tools.allowedTools;
+      if (allowed.length === 0 || !allowed.includes(mockTool)) {
+        return deniedEmission(mockTool, "not_in_allowlist");
+      }
+      ctx.tools.requireGrant(mockTool);
+    }
+
     const retryMax = ctx.state.guardrails?.retryMax ?? 0;
     const backoff = ctx.state.guardrails?.retryBackoffMs ?? 0;
     const jsonSchema = parseOutputSchema(cfg.outputSchema);
@@ -230,7 +250,13 @@ export function createAiExecutor(deps: AiExecutorDeps = {}): Executor {
     const request: ChatRequest = {
       model: cfg.model,
       systemPrompt: cfg.systemPrompt || undefined,
-      messages: messagesFromPayload(ctx.payload),
+      messages: [
+        ...(ctx.history ?? []).map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        ...messagesFromPayload(ctx.payload),
+      ],
       temperature: cfg.temperature,
       maxTokens: cfg.maxTokens,
       jsonSchema,
