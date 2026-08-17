@@ -2,6 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 
 test.describe.configure({ timeout: 120_000 });
 
+type CanvasSnapshot = {
+  nodes: Array<{ id: string; data: { stateType: string } }>;
+  edges: unknown[];
+};
+
 async function dismissDescribeOverlay(page: Page) {
   const describeField = page.getByPlaceholder(/Scrape 12 pages/);
   try {
@@ -9,7 +14,12 @@ async function dismissDescribeOverlay(page: Page) {
   } catch {
     return;
   }
-  await page.locator("div.absolute.inset-0.z-30 button").first().click();
+  const openCanvas = page.getByRole("button", { name: /open canvas/i });
+  if ((await openCanvas.count()) > 0) {
+    await openCanvas.first().click();
+  } else {
+    await page.locator("div.absolute.inset-0.z-30 button").first().click();
+  }
   await expect(describeField).toBeHidden({ timeout: 10_000 });
 }
 
@@ -21,12 +31,22 @@ async function createDummyHarness(page: Page) {
   await page.getByPlaceholder("ingest-and-summarize").fill(name);
   await page.getByText("Create & open canvas").click();
   await page.waitForURL(/\/project\/\d+/, { timeout: 30_000 });
-  const projectUrl = page.url().replace(/\/$/, "");
+  const projectId = page.url().match(/\/project\/(\d+)/)?.[1];
+  if (!projectId) {
+    throw new Error(`Could not parse project id from ${page.url()}`);
+  }
+  const projectUrl = new URL(`/project/${projectId}`, page.url()).toString().replace(/\/$/, "");
   await page.goto(`${projectUrl}/canvas`);
   await page.waitForURL(/\/canvas/, { timeout: 30_000 });
   await dismissDescribeOverlay(page);
   await expect(page.getByText("Add state")).toBeVisible({ timeout: 30_000 });
-  return { name, projectUrl, projectId: projectUrl.split("/").pop() as string };
+  return { name, projectUrl, projectId };
+}
+
+async function selectStateNode(page: Page, type: string) {
+  // Palette adds jitter around the same origin, so notes often overlap.
+  // Force-click the test id rather than the topmost washi tape.
+  await page.getByTestId(`state-node-${type}`).first().click({ force: true });
 }
 
 async function addPaletteState(page: Page, type: string) {
@@ -58,13 +78,13 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
   await addPaletteState(page, "HTTP");
   await addPaletteState(page, "END");
 
-  await expect(page.getByTestId("state-node-START")).toBeVisible({
+  await expect(page.getByTestId("state-node-START").first()).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByTestId("state-node-HTTP")).toBeVisible();
-  await expect(page.getByTestId("state-node-END")).toBeVisible();
+  await expect(page.getByTestId("state-node-HTTP").first()).toBeVisible();
+  await expect(page.getByTestId("state-node-END").first()).toBeVisible();
 
-  await page.getByTestId("state-node-HTTP").click();
+  await selectStateNode(page, "HTTP");
   const urlField = page.getByLabel("URL template");
   await expect(urlField).toBeVisible({ timeout: 15_000 });
   await urlField.fill("https://example.com/health");
@@ -73,12 +93,12 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
   await page.waitForURL(/\/canvas/, { timeout: 30_000 });
   await dismissDescribeOverlay(page);
 
-  await expect(page.getByTestId("state-node-START")).toBeVisible({
+  await expect(page.getByTestId("state-node-START").first()).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByTestId("state-node-HTTP")).toBeVisible();
-  await expect(page.getByTestId("state-node-END")).toBeVisible();
-  await page.getByTestId("state-node-HTTP").click();
+  await expect(page.getByTestId("state-node-HTTP").first()).toBeVisible();
+  await expect(page.getByTestId("state-node-END").first()).toBeVisible();
+  await selectStateNode(page, "HTTP");
   await expect(page.getByLabel("URL template")).toHaveValue(
     "https://example.com/health"
   );
@@ -87,10 +107,14 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
     const raw = localStorage.getItem("fsm-canvas-store");
     if (!raw) return { error: "missing fsm-canvas-store" };
     const parsed = JSON.parse(raw) as {
-      state?: { canvases?: Record<string, { nodes: Array<{ id: string; data: { stateType: string } }>; edges: unknown[] }> };
+      state?: { canvases?: Record<string, CanvasSnapshot> };
+      canvases?: Record<string, CanvasSnapshot>;
     };
-    const canvas = parsed.state?.canvases?.[pid];
-    if (!canvas?.nodes?.length) return { error: "canvas empty", pid };
+    const canvases = parsed.state?.canvases ?? parsed.canvases;
+    const canvas = canvases?.[pid];
+    if (!canvas?.nodes?.length) {
+      return { error: "canvas empty", pid, keys: canvases ? Object.keys(canvases) : [] };
+    }
     const start = canvas.nodes.find((n) => n.data.stateType === "START");
     const http = canvas.nodes.find((n) => n.data.stateType === "HTTP");
     const end = canvas.nodes.find((n) => n.data.stateType === "END");
@@ -136,9 +160,10 @@ test("dummy START → HTTP → END workflow authors, persists, and runs", async 
   ).toBe(true);
 
   await page.goto(`${projectUrl}/runs`);
-  await expect(page.getByText(/run|event|succeeded|dummy/i).first()).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Run history" })).toBeVisible({
     timeout: 20_000,
   });
+  await expect(page.getByTestId("run-events")).toBeVisible();
 });
 
 test("dummy harness memory code book still loads", async ({ page }) => {
