@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+WORKDIR /tools
+COPY tools /tools
+# Python SCRIPT sources; the gRPC server lands with the tool runtime.
+CMD ["python", "-c", "print('tools-python waiting for gRPC runtime')"]
