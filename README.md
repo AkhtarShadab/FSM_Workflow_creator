@@ -14,8 +14,9 @@ pool). Feature **001 Workflow Canvas** is **Complete** (C1–C7, merged to `mast
 with Vitest + Playwright coverage.
 
 What is still simulated: state executors return fixed signals instead of calling
-models or tools, the canvas is persisted only in `localStorage`, BYOK keys are not
-encrypted at rest, and export produces a JSON file rather than a runnable harness.
+models or tools, the canvas is persisted only in `localStorage`, and export produces
+a JSON file rather than a runnable harness. BYOK API keys are sealed with AES-256-GCM
+on the server (`PLATFORM_SECRET`); the browser only stores redacted summaries.
 
 [FeatureShipping/000-completion-roadmap.md](FeatureShipping/000-completion-roadmap.md)
 is the ordered plan to v1. Waves are **merge-gates**; **§8** is how to ship in
@@ -56,3 +57,15 @@ parallel at any time.
 
 To execute in parallel, start with the **ship-dispatcher** subagent
 ([`.cursor/agents/`](.cursor/agents/README.md)), which fans out the four lanes.
+
+## Environment
+
+Copy [`apps/web/.env.example`](apps/web/.env.example) to `apps/web/.env.local`.
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `TURSO_DATABASE_URL` | no (defaults to `file:local.db`) | libSQL / Turso connection |
+| `TURSO_AUTH_TOKEN` | for remote Turso | Auth token |
+| `PLATFORM_SECRET` | **yes** | AES-256-GCM wrapping key for BYOK credentials. The server refuses to boot without it. Generate with `openssl rand -base64 32`. |
+| `PLATFORM_SECRET_PREVIOUS` | no | Previous wrapping key, accepted for **decrypt only** while rotating `PLATFORM_SECRET`. |
+

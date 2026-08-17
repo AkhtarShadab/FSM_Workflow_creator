@@ -39,7 +39,7 @@ export function DslPreviewDialog({
       issues: lintCanvas(canvas, {
         registry,
         credentials: credentials.map((c) => ({
-          id: c.id,
+          id: String(c.id),
           active: c.active,
           models: c.models,
         })),

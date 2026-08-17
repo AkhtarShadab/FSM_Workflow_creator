@@ -25,7 +25,7 @@ export function LintPanel({ projectId }: { projectId: string }) {
         {
           registry,
           credentials: credentials.map((c) => ({
-            id: c.id,
+            id: String(c.id),
             active: c.active,
             models: c.models,
           })),

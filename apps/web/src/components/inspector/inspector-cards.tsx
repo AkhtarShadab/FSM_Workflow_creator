@@ -180,12 +180,12 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
   const ai = node.data.ai;
   const credentials = useCredentialStore((s) => s.credentials);
   const activeCreds = credentials.filter((c) => c.active);
-  const boundCred = credentials.find((c) => c.id === ai.credentialId);
+  const boundCred = credentials.find((c) => String(c.id) === ai.credentialId);
   const brokenRef = Boolean(ai.credentialId) && !boundCred;
 
   const unionModels = activeCreds.flatMap((c) =>
     c.models.map((m) => ({
-      credentialId: c.id,
+      credentialId: String(c.id),
       modelId: m,
       label: `${c.label} · ${m}`,
     }))
@@ -254,7 +254,7 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
                 </SelectItem>
               ) : (
                 credentials.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
+                  <SelectItem key={c.id} value={String(c.id)}>
                     {c.label || c.provider}
                     {!c.active ? " (inactive)" : ""}
                   </SelectItem>
@@ -303,7 +303,7 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
               {unionModels.length > 0
                 ? activeCreds.map((c) =>
                     c.models.map((m) => (
-                      <SelectItem key={`${c.id}:${m}`} value={`${c.id}:${m}`}>
+                      <SelectItem key={`${c.id}:${m}`} value={`${String(c.id)}:${m}`}>
                         {c.label} · {m}
                       </SelectItem>
                     ))

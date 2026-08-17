@@ -18,9 +18,14 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
     ? undefined
     : {
-        command: "pnpm run dev",
+        command: "pnpm run db:migrate && pnpm run dev",
         url: BASE,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
+        env: {
+          ...process.env,
+          PLATFORM_SECRET:
+            process.env.PLATFORM_SECRET || "playwright-test-platform-secret",
+        },
       },
 });
