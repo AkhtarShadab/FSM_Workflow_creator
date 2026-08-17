@@ -49,7 +49,7 @@ Sequencing lives in [000-completion-roadmap.md](000-completion-roadmap.md):
 |-----|---------|------|--------|
 | [000-completion-roadmap.md](000-completion-roadmap.md) | Ordered plan to v1: waves, dependency graph, locked decisions | — | **Living** |
 | [001-workflow-canvas.md](001-workflow-canvas.md) | Workflow canvas: states, tool chaining, SYS_FUNC maps, multi-BYOK, subagents, engine, registry | — | **Complete** (C1–C7) |
-| [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph memory + code-index memory + Memory studio UI | parallel | **Detailed** |
+| [002-memory-and-code-index.md](002-memory-and-code-index.md) | Graph + book (RAG/CAG TOC) memory; intent/identity navigation | parallel | **Detailed** (M1 shipped; B1–B3 next) |
 | [003-live-executors.md](003-live-executors.md) | Real AI / HTTP / VALIDATE / HUMAN executors, SSE run streaming | 1 | **Detailed** |
 | [004-harness-export.md](004-harness-export.md) | Deterministic codegen → ZIP / git runnable harness | 3 | **Detailed** |
 | [005-credential-security.md](005-credential-security.md) | AES-256-GCM credential storage; SSRF-safe discovery | 0 | **Detailed** (S1 shipped) |
