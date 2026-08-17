@@ -423,8 +423,9 @@ export async function buildExportZip(
 
   const artifactVersion = parsed.artifactVersion ?? `${versionRow.version}.0.0`;
   const name =
+    project.name.trim() ||
     (typeof published.dsl.name === "string" && published.dsl.name) ||
-    project.name;
+    "harness";
 
   let files: GeneratedFile[];
   try {

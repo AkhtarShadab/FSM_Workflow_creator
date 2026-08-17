@@ -108,7 +108,7 @@ export async function POST(
     if (result.sizeWarning) {
       headers["X-Export-Size-Warning"] = "1";
     }
-    return new Response(result.bytes, { status: 200, headers });
+    return new Response(Buffer.from(result.bytes), { status: 200, headers });
   } catch (err) {
     if (err instanceof ExportRouteError) return jsonError(err);
     return NextResponse.json(
