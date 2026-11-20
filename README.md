@@ -10,8 +10,7 @@ gateway), engineered for minimal token consumption.
 
 **Shipped scaffold + canvas authoring.** Monorepo with `apps/web` (Next.js creator UI)
 and `packages/fsm-engine` (signal parser / run loop — on Feature 001 branches/PRs).
-Feature **001 Workflow Canvas** is **Complete** (phases C1–C7) on branches/PRs — C1
-merged to `master`; C2–C7 in open PRs. Feature **002 Memory & Code Index** is
+Feature **001 Workflow Canvas** is **Complete** (phases C1–C7), all merged to `master`. Feature **002 Memory & Code Index** is
 **Detailed** (not shipped). See [FeatureShipping/](FeatureShipping/) for the
 detail → ship → test workflow.
 
@@ -21,6 +20,7 @@ detail → ship → test workflow.
 |-----|----------|
 | [InitialDraftPlan.md](InitialDraftPlan.md) | Original concept: FSM engine, signal transitions, token optimization, Magic UI canvas, roadmap |
 | [DETAILED_DESIGN_PLAN.md](DETAILED_DESIGN_PLAN.md) | Implementation-grade design: architecture decisions, monorepo layout, FSM DSL, signal grammar, gRPC/proto contracts, BYOK gateway, **testing strategy (Vitest + Playwright)**, **CI pipeline**, open questions, and de-risking next steps |
+| [CODE_REVIEW_FIXES.md](CODE_REVIEW_FIXES.md) | Code review: bugs fixed (engine, SSRF guard, UI crashes) with regression tests, plus recommended follow-ups |
 | [FeatureShipping/](FeatureShipping/) | Per-feature design deltas (canvas, memory/code index, live executors, export, …). Workflow: **detail-feature** (high-end) → **ship-feature** (Composer/Grok) → **test-feature** (Composer/Grok) |
 
 ## Highlights
@@ -33,6 +33,6 @@ detail → ship → test workflow.
 
 ## Next up
 
-- Land open canvas PRs, then ship Feature 002 (M1+)
+- Ship Feature 002 (M1+); work through follow-ups in [CODE_REVIEW_FIXES.md](CODE_REVIEW_FIXES.md#recommended-follow-ups-not-changed-here)
 - Detail next FeatureShipping stubs (live executors, credential security, harness export)
 - Remaining design-plan packages (`byok-gateway`, `export-engine`, gRPC shims) still future work — see [DETAILED_DESIGN_PLAN.md §16](DETAILED_DESIGN_PLAN.md)

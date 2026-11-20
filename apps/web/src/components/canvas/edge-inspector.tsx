@@ -46,6 +46,10 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const selectEdge = useCanvasStore((s) => s.selectEdge);
   const updateEdgeSignal = useCanvasStore((s) => s.updateEdgeSignal);
   const removeEdge = useCanvasStore((s) => s.removeEdge);
+  // All hooks must run before the early return below (Rules of Hooks);
+  // previously this selector sat after `if (!edge) return null`, so selecting
+  // an edge changed the hook count and React threw.
+  const updateEdgeData = useCanvasStore((s) => s.updateEdgeData);
 
   const edge = edges.find((e) => e.id === selectedEdgeId);
   const [custom, setCustom] = useState("");
@@ -57,7 +61,6 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const currentSignal = String(edge.data?.signal ?? "");
   const currentKind = (edge.type ?? "script") as EdgeKind;
   const topologyKind = edge.data?.kind ?? "transition";
-  const updateEdgeData = useCanvasStore((s) => s.updateEdgeData);
 
   return (
     <aside className="absolute top-4 right-4 bottom-4 z-20 w-[min(380px,92vw)]">

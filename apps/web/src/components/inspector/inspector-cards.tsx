@@ -38,6 +38,8 @@ import {
   normalizeSpawn,
   normalizeSystemFunction,
   primaryProfile,
+  spawnWorkerCount,
+  syncHeterogeneousProfiles,
 } from "@/lib/fsm-types";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useScriptTemplateStore } from "@/stores/script-template-store";
@@ -563,13 +565,55 @@ function csvToList(raw: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Comma/newline list editor. Keeps the raw text locally so separators and
+ * trailing spaces survive while typing — the previous controlled
+ * `value={list.join(", ")}` re-parsed every keystroke and stripped the comma
+ * you just typed, making it impossible to enter a second item.
+ */
+function ListTextarea({
+  list,
+  onChange,
+  placeholder,
+}: {
+  list: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(() => list.join(", "));
+  const joined = list.join("\u0000");
+  const [lastJoined, setLastJoined] = useState(joined);
+  // Re-sync when the list changes from outside (node switch, undo, …)
+  if (joined !== lastJoined) {
+    setLastJoined(joined);
+    if (csvToList(draft).join("\u0000") !== joined) setDraft(list.join(", "));
+  }
+  return (
+    <Textarea
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const next = csvToList(e.target.value);
+        setLastJoined(next.join("\u0000"));
+        onChange(next);
+      }}
+      placeholder={placeholder}
+      className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+    />
+  );
+}
+
 /** SPAWN-state config — Topology | Tools | Skills | Models | Aggregation */
 export function SpawnCard({ node, patch }: CardProps) {
   const [tab, setTab] = useState<SpawnTab>("Topology");
   const spawn = normalizeSpawn(node.data.spawn);
   const profile = primaryProfile(spawn);
 
-  const setSpawn = (next: SpawnConfig) => patch({ spawn: next });
+  // Heterogeneous spawns need one profile per child; the inspector only
+  // edits profile[0], so keep the profile list sized to `count` (otherwise
+  // SPAWN_PROFILE_MISMATCH could never be resolved from the UI).
+  const setSpawn = (next: SpawnConfig) =>
+    patch({ spawn: syncHeterogeneousProfiles(next) });
 
   const patchProfile = (partial: Partial<typeof profile>) => {
     const profiles = [...spawn.profiles];
@@ -637,8 +681,12 @@ export function SpawnCard({ node, patch }: CardProps) {
               <Input
                 type="number"
                 value={spawn.count}
+                min={1}
                 onChange={(e) =>
-                  setSpawn({ ...spawn, count: Number(e.target.value) })
+                  setSpawn({
+                    ...spawn,
+                    count: Math.max(1, Math.floor(Number(e.target.value)) || 1),
+                  })
                 }
                 className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
               />
@@ -684,11 +732,11 @@ export function SpawnCard({ node, patch }: CardProps) {
           <Label className="text-xs text-muted-foreground">
             Tool pack (comma / newline separated)
           </Label>
-          <Textarea
-            value={profile.toolPack.join(", ")}
-            onChange={(e) => patchProfile({ toolPack: csvToList(e.target.value) })}
+          <ListTextarea
+            key={`${node.id}-tools`}
+            list={profile.toolPack}
+            onChange={(toolPack) => patchProfile({ toolPack })}
             placeholder="fetch_pages, write_report"
-            className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
           />
         </div>
       )}
@@ -698,13 +746,11 @@ export function SpawnCard({ node, patch }: CardProps) {
           <Label className="text-xs text-muted-foreground">
             Skill pack (opaque skill ids)
           </Label>
-          <Textarea
-            value={profile.skillPack.join(", ")}
-            onChange={(e) =>
-              patchProfile({ skillPack: csvToList(e.target.value) })
-            }
+          <ListTextarea
+            key={`${node.id}-skills`}
+            list={profile.skillPack}
+            onChange={(skillPack) => patchProfile({ skillPack })}
             placeholder="ship-feature, code-review"
-            className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
           />
         </div>
       )}
@@ -765,8 +811,16 @@ export function SpawnCard({ node, patch }: CardProps) {
               <Input
                 type="number"
                 value={spawn.quorumK ?? 1}
+                min={1}
+                max={spawnWorkerCount(spawn)}
                 onChange={(e) =>
-                  setSpawn({ ...spawn, quorumK: Number(e.target.value) })
+                  setSpawn({
+                    ...spawn,
+                    quorumK: Math.min(
+                      spawnWorkerCount(spawn),
+                      Math.max(1, Math.floor(Number(e.target.value)) || 1)
+                    ),
+                  })
                 }
                 className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
               />

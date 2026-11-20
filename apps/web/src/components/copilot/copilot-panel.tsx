@@ -45,7 +45,6 @@ export function CopilotPanel({ projectId }: { projectId: string }) {
   const addNode = useCanvasStore((s) => s.addNode);
   const clearCanvas = useCanvasStore((s) => s.clearCanvas);
   const onConnect = useCanvasStore((s) => s.onConnect);
-  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -71,6 +70,12 @@ export function CopilotPanel({ projectId }: { projectId: string }) {
         aggregate: "AGGREGATE",
         system: "SYSTEM_FUNCTION",
         sysfunc: "SYSTEM_FUNCTION",
+        http: "HTTP",
+        fetch: "HTTP",
+        validate: "VALIDATE",
+        human: "HUMAN",
+        external: "EXTERNAL_AI",
+        external_ai: "EXTERNAL_AI",
         end: "END",
       };
       const type = map[kind];
@@ -85,7 +90,10 @@ export function CopilotPanel({ projectId }: { projectId: string }) {
     }
 
     if (text.includes("connect")) {
-      const list = nodes ?? [];
+      // Read live state: this runs inside a setTimeout, so the `nodes`
+      // captured at render time can be stale.
+      const list =
+        useCanvasStore.getState().canvases[projectId]?.nodes ?? [];
       if (list.length < 2) {
         reply("I need at least two stickies on the board before I can wire them.");
         return;

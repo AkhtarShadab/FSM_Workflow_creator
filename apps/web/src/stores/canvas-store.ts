@@ -29,6 +29,17 @@ function nextId(type: FSMStateType) {
   return `${type === "START" ? "S0" : `S${type.slice(0, 2)}${counter}`}_${Date.now().toString(36)}`;
 }
 
+/**
+ * Edge ids must be unique even when two edges between the same pair are
+ * created in the same millisecond (Conditions "Add", Copilot, re-target via
+ * remove+add) — `Date.now()` alone collided and React Flow merged them.
+ */
+let edgeCounter = 0;
+function nextEdgeId(source: string, target: string) {
+  edgeCounter += 1;
+  return `e-${source}-${target}-${Date.now().toString(36)}${edgeCounter.toString(36)}`;
+}
+
 const EMPTY: CanvasData = { nodes: [], edges: [] };
 
 interface CanvasStore {
@@ -122,6 +133,11 @@ export const useCanvasStore = create<CanvasStore>()(
       removeNode: (projectId, nodeId) =>
         set((state) => {
           const canvas = state.canvases[projectId] ?? EMPTY;
+          const removedEdgeIds = new Set(
+            canvas.edges
+              .filter((e) => e.source === nodeId || e.target === nodeId)
+              .map((e) => e.id)
+          );
           return {
             ...setCanvas(state, projectId, {
               nodes: canvas.nodes.filter((n) => n.id !== nodeId),
@@ -131,6 +147,10 @@ export const useCanvasStore = create<CanvasStore>()(
             }),
             selectedNodeId:
               state.selectedNodeId === nodeId ? null : state.selectedNodeId,
+            selectedEdgeId:
+              state.selectedEdgeId && removedEdgeIds.has(state.selectedEdgeId)
+                ? null
+                : state.selectedEdgeId,
           };
         }),
 
@@ -205,7 +225,7 @@ export const useCanvasStore = create<CanvasStore>()(
             target
           );
           const edge: TransitionEdge = {
-            id: `e-${source}-${target}-${Date.now().toString(36)}`,
+            id: nextEdgeId(source, target),
             source,
             target,
             type: edgeTypeForSignal(signal),
@@ -297,7 +317,7 @@ export const useCanvasStore = create<CanvasStore>()(
           );
 
           const edge: TransitionEdge = {
-            id: `e-${connection.source}-${connection.target}-${Date.now().toString(36)}`,
+            id: nextEdgeId(connection.source, connection.target),
             source: connection.source,
             target: connection.target,
             sourceHandle,

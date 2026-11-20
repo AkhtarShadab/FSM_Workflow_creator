@@ -1,80 +1,10 @@
 import { db } from "@/db";
 import { fsmDefinitions, runEvents, runs } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import {
-  runFsm,
-  type EngineEdge,
-  type EngineState,
-} from "@fsm/engine";
+import { runFsm, type EngineState } from "@fsm/engine";
 import type { CanvasData } from "@/lib/fsm-types";
-import { normalizeSpawn } from "@/lib/fsm-types";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
-
-function canvasToEngine(canvas: CanvasData): {
-  states: EngineState[];
-  edges: EngineEdge[];
-} {
-  const states: EngineState[] = canvas.nodes.map((n) => {
-    const base: EngineState = {
-      id: n.id,
-      type: n.data.stateType,
-      label: n.data.label,
-      onErrorSignal: n.data.onError?.signal ?? "::SCRIPT.ERROR",
-      guardrails: n.data.guardrails,
-    };
-    if (n.data.inputSchema) {
-      try {
-        base.inputSchema = JSON.parse(n.data.inputSchema);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (n.data.stateType === "SYSTEM_FUNCTION") {
-      base.mask = {
-        enabledStateIds: n.data.systemFunction.enabledStateIds ?? [],
-        disabledStateIds: n.data.systemFunction.disabledStateIds ?? [],
-        rewire: n.data.systemFunction.rewire ?? [],
-      };
-    }
-    if (n.data.stateType === "SPAWN") {
-      const spawn = normalizeSpawn(n.data.spawn);
-      base.spawn = {
-        mode: spawn.mode,
-        count: spawn.count,
-        maxConcurrency: spawn.maxConcurrency,
-        strategy: spawn.strategy,
-        quorumK: spawn.quorumK,
-        cancelOnParentHalt: spawn.cancelOnParentHalt,
-        profiles: spawn.profiles.map((p) => ({
-          id: p.id,
-          toolPack: p.toolPack,
-          skillPack: p.skillPack,
-          timeoutMs: p.timeoutMs,
-        })),
-      };
-    }
-    if (n.data.stateType === "VALIDATE") {
-      try {
-        base.inputSchema = n.data.validate.schema
-          ? JSON.parse(n.data.validate.schema)
-          : { type: "object" };
-      } catch {
-        base.inputSchema = { type: "object" };
-      }
-    }
-    return base;
-  });
-
-  const edges: EngineEdge[] = canvas.edges.map((e) => ({
-    from: e.source,
-    on: e.data?.signal ?? "::SCRIPT.NEXT",
-    to: e.target,
-    kind: e.data?.kind,
-    maxIterations: e.data?.maxIterations,
-  }));
-
-  return { states, edges };
-}
+import { canvasToEngine } from "@/lib/canvas-to-engine";
 
 async function stubExecute(args: {
   state: EngineState;
@@ -124,24 +54,44 @@ export async function startProjectRun(projectId: number, canvas: CanvasData) {
     .values({ fsmId: fsm.id, status: "running" })
     .returning();
 
-  const { states, edges } = canvasToEngine(canvas);
-  const result = await runFsm({
-    states,
-    edges,
-    executeState: stubExecute,
-    executeChild: async () => ({ stub: true }),
-  });
-
-  for (const ev of result.events) {
-    await db.insert(runEvents).values({
-      runId: run.id,
-      stateId: ev.stateId,
-      kind: ev.kind,
-      payloadJson: JSON.stringify({
-        message: ev.message,
-        payload: ev.payload,
-      }),
+  let result: Awaited<ReturnType<typeof runFsm>>;
+  try {
+    const { states, edges } = canvasToEngine(canvas);
+    result = await runFsm({
+      states,
+      edges,
+      executeState: stubExecute,
+      executeChild: async () => ({ stub: true }),
     });
+
+    if (result.events.length > 0) {
+      await db.insert(runEvents).values(
+        result.events.map((ev) => ({
+          runId: run.id,
+          stateId: ev.stateId,
+          kind: ev.kind,
+          payloadJson: JSON.stringify({
+            message: ev.message,
+            payload: ev.payload,
+          }),
+        }))
+      );
+    }
+    if (result.error) {
+      await db.insert(runEvents).values({
+        runId: run.id,
+        stateId: result.finalStateId ?? "engine",
+        kind: "ERROR",
+        payloadJson: JSON.stringify({ message: result.error }),
+      });
+    }
+  } catch (err) {
+    // Never leave a run stuck in "running" if the engine or DB throws.
+    await db
+      .update(runs)
+      .set({ status: "failed", endedAt: new Date() })
+      .where(eq(runs.id, run.id));
+    throw err;
   }
 
   await db

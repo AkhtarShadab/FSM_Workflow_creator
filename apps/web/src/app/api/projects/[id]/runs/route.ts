@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { projects } from "@/db/schema";
 import { startProjectRun } from "@/lib/run-engine";
 import type { CanvasData } from "@/lib/fsm-types";
 
@@ -8,8 +11,19 @@ export async function POST(
 ) {
   const { id } = await context.params;
   const projectId = Number(id);
-  if (!Number.isFinite(projectId)) {
+  if (!Number.isInteger(projectId) || projectId <= 0) {
     return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  }
+
+  // SQLite FKs are not enforced by default, so check explicitly instead of
+  // silently writing orphaned fsm_definitions / runs rows.
+  const [project] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
   let body: { canvas?: CanvasData };
@@ -19,7 +33,7 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body.canvas?.nodes || !body.canvas?.edges) {
+  if (!Array.isArray(body.canvas?.nodes) || !Array.isArray(body.canvas?.edges)) {
     return NextResponse.json(
       { error: "canvas.nodes and canvas.edges required" },
       { status: 400 }

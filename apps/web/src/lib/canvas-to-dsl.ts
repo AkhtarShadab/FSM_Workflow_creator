@@ -37,10 +37,15 @@ export interface LintContext {
  * Converts React Flow canvas state into the versioned FSM Definition DSL
  * described in §5.2 of the design plan + FeatureShipping 001 C1 fields.
  */
-export function canvasToDsl(
-  canvas: CanvasData,
-  meta: { name?: string; version?: number } = {}
-) {
+export interface DslMeta {
+  name?: string;
+  version?: number;
+  /** Export wizard choices (previously ignored — always python/redis) */
+  toolLanguage?: "python" | "cpp" | "bash";
+  checkpointStore?: "redis" | "mongo" | "sql";
+}
+
+export function canvasToDsl(canvas: CanvasData, meta: DslMeta = {}) {
   const { nodes, edges } = canvas;
 
   const states = nodes.map((node) => {
@@ -236,8 +241,8 @@ export function canvasToDsl(
     version: meta.version ?? 1,
     name: meta.name ?? "untitled-harness",
     config: {
-      toolLanguage: "python",
-      checkpointStore: "redis",
+      toolLanguage: meta.toolLanguage ?? "python",
+      checkpointStore: meta.checkpointStore ?? "redis",
       tokenBudget: { perRun: 200000, perState: 20000, onExceed: "halt" },
     },
     clusters: [],
@@ -254,6 +259,25 @@ function safeJson(raw: string): unknown {
 }
 
 const ERROR_SIGNAL_HINT = /\.ERROR|VALIDATION_ERROR|HALT/;
+
+/**
+ * An edge routes errors for `node` when its signal matches the generic error
+ * pattern OR the node's own configured error signals (e.g. HUMAN defaults to
+ * `::HUMAN.REJECT` / `::HUMAN.TIMEOUT`, which the generic regex misses).
+ */
+function isErrorEdgeFor(node: StateNode, e: TransitionEdge): boolean {
+  const signal = e.data?.signal ?? "::SCRIPT.NEXT";
+  if (ERROR_SIGNAL_HINT.test(signal)) return true;
+  if (node.data.onError?.signal && signal === node.data.onError.signal) return true;
+  if (
+    node.data.stateType === "HUMAN" &&
+    node.data.human?.onTimeout?.signal &&
+    signal === node.data.human.onTimeout.signal
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /** `{{payload.foo}}` keys referenced in a template */
 export function findUndeclaredPayloadKeys(template: string): string[] {
@@ -308,14 +332,15 @@ export function hasPathToEndUnderMask(
       .map((n) => n.id)
   );
 
-  // Adjacency: signal-keyed map, then apply rewires
-  type Adj = Map<string, Map<string, string>>; // from → (on → to)
+  // Adjacency: from → (on → targets). Several authored edges may share the
+  // same (from, on) — e.g. toHint fan-out — so keep every target. A rewire
+  // row replaces all targets for its (from, on), mirroring the engine.
+  type Adj = Map<string, Map<string, string[]>>;
   const adj: Adj = new Map();
 
-  const setEdge = (from: string, on: string, to: string) => {
-    if (!enabled.has(from) || !enabled.has(to)) return;
+  const slot = (from: string) => {
     if (!adj.has(from)) adj.set(from, new Map());
-    adj.get(from)!.set(on, to);
+    return adj.get(from)!;
   };
 
   for (const e of edges) {
@@ -323,10 +348,16 @@ export function hasPathToEndUnderMask(
     // UNREACHABLE / DEAD_END reachability checks and skip them.
     const data = normalizeEdgeData(e.data, e.source, e.target);
     if (data.kind === "router") continue;
-    setEdge(e.source, data.signal, e.target);
+    if (!enabled.has(e.source) || !enabled.has(e.target)) continue;
+    const bySignal = slot(e.source);
+    bySignal.set(data.signal, [...(bySignal.get(data.signal) ?? []), e.target]);
   }
   for (const r of mask.rewire) {
-    if (r.from && r.on && r.to) setEdge(r.from, r.on, r.to);
+    if (!(r.from && r.on && r.to)) continue;
+    if (!enabled.has(r.from)) continue;
+    const bySignal = slot(r.from);
+    if (enabled.has(r.to)) bySignal.set(r.on, [r.to]);
+    else bySignal.delete(r.on);
   }
 
   const queue = starts.map((s) => s.id).filter((id) => enabled.has(id));
@@ -336,10 +367,12 @@ export function hasPathToEndUnderMask(
     if (ends.has(cur)) return true;
     const outs = adj.get(cur);
     if (!outs) continue;
-    for (const to of outs.values()) {
-      if (!seen.has(to)) {
-        seen.add(to);
-        queue.push(to);
+    for (const targets of outs.values()) {
+      for (const to of targets) {
+        if (!seen.has(to)) {
+          seen.add(to);
+          queue.push(to);
+        }
       }
     }
   }
@@ -413,9 +446,7 @@ export function lintCanvas(
   );
   for (const n of runnable) {
     const outs = flowEdges.filter((e) => e.source === n.id);
-    const hasErrorEdge = outs.some((e) =>
-      ERROR_SIGNAL_HINT.test(e.data?.signal ?? "")
-    );
+    const hasErrorEdge = outs.some((e) => isErrorEdgeFor(n, e));
     if (!hasErrorEdge) {
       issues.push(
         issue(
@@ -884,8 +915,7 @@ export function lintCanvas(
     for (const r of runnable) {
       if (isStateDisabledByMask(r.id, mask)) continue;
       const errorEdges = flowEdges.filter(
-        (e) =>
-          e.source === r.id && ERROR_SIGNAL_HINT.test(e.data?.signal ?? "")
+        (e) => e.source === r.id && isErrorEdgeFor(r, e)
       );
       if (errorEdges.length === 0) continue;
       const allTargetsDisabled = errorEdges.every((e) =>

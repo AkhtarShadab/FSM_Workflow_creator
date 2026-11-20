@@ -45,6 +45,27 @@ const COMPOSE_PREVIEW = `services:
     build: { dockerfile: Dockerfile.gateway }
     env_file: .env   # BYOK base URL + key`;
 
+/** Module-scope so sections are not remounted on every wizard click. */
+function Section({
+  title,
+  accent,
+  children,
+}: {
+  title: string;
+  accent: string;
+  children: React.ReactNode;
+}) {
+  return (
+  <section>
+    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
+      <span className={cn("h-2 w-2 rounded-full", accent)} />
+      {title}
+    </h2>
+    {children}
+  </section>
+);
+}
+
 export function ExportWizard({
   projectId,
   projectName,
@@ -52,8 +73,9 @@ export function ExportWizard({
   projectId: string;
   projectName: string;
 }) {
-  const [language, setLanguage] = useState<string>("python");
-  const [store, setStore] = useState<string>("redis");
+  const [language, setLanguage] =
+    useState<(typeof LANGUAGES)[number]["id"]>("python");
+  const [store, setStore] = useState<(typeof STORES)[number]["id"]>("redis");
   const [target, setTarget] = useState<string>("zip");
   const [downloaded, setDownloaded] = useState(false);
 
@@ -64,9 +86,10 @@ export function ExportWizard({
     () =>
       canvasToDsl(
         { nodes: nodes ?? [], edges: edges ?? [] },
-        { name: projectName }
+        // Wizard choices must reach fsm.json (they were silently ignored)
+        { name: projectName, toolLanguage: language, checkpointStore: store }
       ),
-    [nodes, edges, projectName]
+    [nodes, edges, projectName, language, store]
   );
 
   const downloadDsl = () => {
@@ -82,24 +105,6 @@ export function ExportWizard({
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 2000);
   };
-
-  const Section = ({
-    title,
-    accent,
-    children,
-  }: {
-    title: string;
-    accent: string;
-    children: React.ReactNode;
-  }) => (
-    <section>
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground/80 uppercase">
-        <span className={cn("h-2 w-2 rounded-full", accent)} />
-        {title}
-      </h2>
-      {children}
-    </section>
-  );
 
   return (
     <div className="flex h-screen flex-col bg-background">

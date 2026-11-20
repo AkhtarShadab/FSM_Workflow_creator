@@ -94,6 +94,15 @@ export function RunsView({
           message: ev.message,
         });
       }
+      // Engine failures (no allowlisted edge, self-loop cap, …) come back as
+      // `error` with HTTP 200 — show them instead of a silent "failed".
+      if (data.error) {
+        pushEvent({
+          stateId: "engine",
+          kind: "SYSTEM",
+          message: `error: ${data.error}`,
+        });
+      }
     } catch (err) {
       setLastStatus("failed");
       pushEvent({

@@ -506,6 +506,31 @@ export function spawnWorkerCount(spawn: SpawnConfig): number {
   return spawn.mode === "heterogeneous" ? spawn.profiles.length : spawn.count;
 }
 
+/**
+ * Keep heterogeneous profiles in step with `count` (one profile per child).
+ * New slots clone the last profile with a fresh id; extra slots are dropped.
+ * Homogeneous spawns are returned unchanged.
+ */
+export function syncHeterogeneousProfiles(spawn: SpawnConfig): SpawnConfig {
+  if (spawn.mode !== "heterogeneous") return spawn;
+  const count = Math.max(1, Math.floor(spawn.count) || 1);
+  const profiles = spawn.profiles.slice(0, count);
+  const template = profiles[profiles.length - 1] ?? defaultChildProfile();
+  const used = new Set(profiles.map((p) => p.id));
+  for (let i = profiles.length; i < count; i++) {
+    let id = `p${i}`;
+    for (let n = i; used.has(id); n++) id = `p${n + 1}`;
+    used.add(id);
+    profiles.push({
+      ...template,
+      id,
+      toolPack: [...template.toolPack],
+      skillPack: [...template.skillPack],
+    });
+  }
+  return { ...spawn, count, profiles };
+}
+
 /** Normalize persisted / legacy spawn shapes to SpawnConfig v2 */
 export function normalizeSpawn(raw: unknown): SpawnConfig {
   const base = defaultSpawnConfig();
@@ -516,7 +541,10 @@ export function normalizeSpawn(raw: unknown): SpawnConfig {
   if (!("profiles" in s) && typeof s.childFsm === "string") {
     return {
       ...base,
-      count: typeof s.count === "number" ? s.count : base.count,
+      count:
+        typeof s.count === "number" && Number.isFinite(s.count)
+          ? Math.max(1, Math.floor(s.count))
+          : base.count,
       strategy:
         s.strategy === "quorum" || s.strategy === "firstSuccess" || s.strategy === "waitAll"
           ? s.strategy
@@ -543,7 +571,10 @@ export function normalizeSpawn(raw: unknown): SpawnConfig {
 
   return {
     mode: s.mode === "heterogeneous" ? "heterogeneous" : "homogeneous",
-    count: typeof s.count === "number" ? s.count : base.count,
+    count:
+      typeof s.count === "number" && Number.isFinite(s.count)
+        ? Math.max(1, Math.floor(s.count))
+        : base.count,
     maxConcurrency,
     strategy:
       s.strategy === "quorum" || s.strategy === "firstSuccess" || s.strategy === "waitAll"

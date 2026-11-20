@@ -56,7 +56,7 @@ export const useScriptTemplateStore = create<ScriptTemplateStore>()(
       custom: [],
 
       saveTemplate: (t) => {
-        const id = `tpl_${Date.now().toString(36)}`;
+        const id = `tpl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
         set((state) => ({
           custom: [...state.custom, { ...t, id, builtin: false }],
         }));

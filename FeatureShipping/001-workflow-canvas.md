@@ -1,6 +1,6 @@
 # 001 — Workflow Canvas
 
-> Status: **Complete (v1 C1–C6 + v2 C7 Round 2)** on `cursor/canvas-c7-round2` — AI/HTTP executors still stubbed; gRPC bridge deferred; live HUMAN bridge stubbed as auto-approve  
+> Status: **Complete (v1 C1–C6 + v2 C7 Round 2)**, merged to `master` (post-merge bug fixes: [CODE_REVIEW_FIXES.md](../CODE_REVIEW_FIXES.md)) — AI/HTTP executors still stubbed; gRPC bridge deferred; live HUMAN bridge stubbed as auto-approve  
 > Relates to: [DETAILED_DESIGN_PLAN.md](../DETAILED_DESIGN_PLAN.md) §§2, 5–7, 9–10  
 > Code today: [`apps/web/src/lib/fsm-types.ts`](../apps/web/src/lib/fsm-types.ts), canvas + inspector under `apps/web/src/components/`, engine [`packages/fsm-engine/`](../packages/fsm-engine/)  
 > Implement with: **ship-feature** on Composer/Grok · Detail updates: **detail-feature** on high-end models

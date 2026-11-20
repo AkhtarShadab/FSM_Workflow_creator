@@ -1,6 +1,11 @@
 import { resolveTransition, type EngineEdge, type EngineMask } from "./resolver";
 import { runState, type Clock } from "./run-state";
-import { runSpawn, type ChildEnvelope, type SpawnPoolConfig } from "./spawn-pool";
+import {
+  runSpawn,
+  type ChildEnvelope,
+  type ChildExecutor,
+  type SpawnPoolConfig,
+} from "./spawn-pool";
 import type { Emission } from "./signals";
 
 export interface EngineState {
@@ -48,9 +53,7 @@ export async function runFsm(args: {
   states: EngineState[];
   edges: EngineEdge[];
   executeState: StateExecutor;
-  executeChild?: SpawnPoolConfig extends never ? never : (
-    ctx: Parameters<Parameters<typeof runSpawn>[1]>[0]
-  ) => Promise<unknown>;
+  executeChild?: ChildExecutor;
   clock?: Clock;
   abortSignal?: AbortSignal;
   maxSteps?: number;
@@ -71,6 +74,15 @@ export async function runFsm(args: {
   const selfLoopCounts = new Map<string, number>();
 
   for (let step = 0; step < maxSteps; step++) {
+    if (args.abortSignal?.aborted) {
+      return {
+        status: "failed",
+        events,
+        finalStateId: currentId,
+        aggregate,
+        error: "Run aborted",
+      };
+    }
     const state = byId.get(currentId);
     if (!state) {
       return {
@@ -143,9 +155,16 @@ export async function runFsm(args: {
         payload: emission,
       });
 
-      if (!result.ok) {
-        // still try to follow error signal
+      if (!result.ok && result.reason === "aborted") {
+        return {
+          status: "failed",
+          events,
+          finalStateId: state.id,
+          aggregate,
+          error: "Run aborted",
+        };
       }
+      // Other failures follow the state's error signal via the allowlist.
     }
 
     const resolved = resolveTransition({
@@ -165,12 +184,20 @@ export async function runFsm(args: {
       };
     }
 
-    const matchedEdge = args.edges.find(
-      (e) =>
-        e.from === state.id &&
-        e.on === resolved.signal &&
-        e.to === resolved.to
-    );
+    const matchedEdge =
+      args.edges.find(
+        (e) =>
+          e.from === state.id &&
+          e.on === resolved.signal &&
+          e.to === resolved.to &&
+          e.kind !== "router"
+      ) ??
+      args.edges.find(
+        (e) =>
+          e.from === state.id &&
+          e.on === resolved.signal &&
+          e.to === resolved.to
+      );
     if (
       matchedEdge &&
       (matchedEdge.kind === "self-loop" || matchedEdge.from === matchedEdge.to)

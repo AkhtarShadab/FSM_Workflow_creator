@@ -49,9 +49,15 @@ export function resolveTransition(args: {
 
   const effectiveEdges = applyRewire(args.edges, mask);
 
-  const candidates = effectiveEdges.filter(
+  const matching = effectiveEdges.filter(
     (e) => e.from === args.fromStateId && e.on === parsed.signal
   );
+  // Router edges are SYS_FUNC head wiring (§10.2/§10.5), not flow. Prefer
+  // real transitions / self-loops so a router wire that happens to share the
+  // emitted signal never hijacks the hop; fall back to router edges only when
+  // nothing else matches.
+  const flow = matching.filter((e) => e.kind !== "router");
+  const candidates = flow.length > 0 ? flow : matching;
 
   if (candidates.length === 0) {
     return {
@@ -121,10 +127,11 @@ function skipDisabled(
   let cur = target;
   let hops = 0;
   while (isStateDisabledByMask(cur, mask) && hops < maxSkip) {
-    const next = edges.find((e) => e.from === cur && e.on === parsed.signal);
+    const outs = edges.filter((e) => e.from === cur && e.kind !== "router");
+    const next = outs.find((e) => e.on === parsed.signal);
     if (!next) {
-      // try any outgoing from disabled node
-      const any = edges.find((e) => e.from === cur);
+      // try any outgoing (non-router) edge from the disabled node
+      const any = outs[0];
       if (!any) break;
       cur = any.to;
     } else {
