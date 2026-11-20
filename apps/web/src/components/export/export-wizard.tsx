@@ -14,6 +14,8 @@ import { ProjectNav } from "@/components/nav/project-nav";
 import { cn } from "@/lib/utils";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
 import { useCanvasStore } from "@/stores/canvas-store";
+import { useRegistryStore } from "@/stores/registry-store";
+import { exportRegistryBundle } from "@/lib/registry";
 
 const LANGUAGES = [
   { id: "python", label: "Python", desc: "grpcio server, module-per-tool" },
@@ -32,20 +34,42 @@ const TARGETS = [
   { id: "git", label: "Git push", desc: "Direct commit to your repo (Q24)", Icon: GitBranch },
 ] as const;
 
-const COMPOSE_PREVIEW = `services:
+/** docker-compose preview derived from the wizard choices (was static text). */
+function composePreview(language: string, store: string): string {
+  const storeService =
+    store === "mongo"
+      ? { url: "mongodb://store:27017/fsm", image: "mongo:7" }
+      : store === "sql"
+        ? { url: "postgres://fsm:fsm@store:5432/fsm", image: "postgres:16" }
+        : { url: "redis://store:6379", image: "redis:7" };
+  const toolsService =
+    language === "cpp" ? "tools-cpp" : language === "bash" ? "tools-bash" : "tools-python";
+  return `services:
   fsm-controller:
     build: { dockerfile: Dockerfile.controller }
     environment:
-      - CHECKPOINT_STORE_URL=redis://store:6379
-  tools-python:
-    build: { dockerfile: Dockerfile.tools-python }
+      - CHECKPOINT_STORE_URL=${storeService.url}
+  ${toolsService}:
+    build: { dockerfile: Dockerfile.${toolsService} }
   store:
-    image: redis:7
+    image: ${storeService.image}
   byok-gateway:
     build: { dockerfile: Dockerfile.gateway }
     env_file: .env   # BYOK base URL + key`;
+}
 
 /** Module-scope so sections are not remounted on every wizard click. */
+function saveJson(filename: string, json: string) {
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  // Revoke after the click has been handled (immediate revoke can cancel it).
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function Section({
   title,
   accent,
@@ -92,25 +116,22 @@ export function ExportWizard({
     [nodes, edges, projectName, language, store]
   );
 
+  const registry = useRegistryStore((s) => s.registry);
+
   const downloadDsl = () => {
-    const blob = new Blob([JSON.stringify(dsl, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "fsm.json";
-    a.click();
-    URL.revokeObjectURL(url);
+    saveJson("fsm.json", JSON.stringify(dsl, null, 2));
+    // §3.6: export bundles include the project registry (custom signals,
+    // skills, SYS_FUNC templates) so the harness can resolve them.
+    saveJson("registry.json", exportRegistryBundle(registry));
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 2000);
   };
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-dvh flex-col bg-background">
       <ProjectNav projectId={projectId} projectName={projectName} />
 
-      <main className="flex-1 overflow-y-auto p-6">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto flex max-w-4xl flex-col gap-8">
           <BlurFade delay={0.05} inView>
             <div>
@@ -192,11 +213,14 @@ export function ExportWizard({
 
           <BlurFade delay={0.25} inView>
           <Section title="4 · docker-compose preview" accent="bg-amber-400">
-            <Terminal className="max-w-full border-foreground/10 bg-background text-left">
+            <Terminal
+              key={`${language}-${store}`}
+              className="max-w-full border-foreground/10 bg-background text-left"
+            >
               <TypingAnimation className="text-emerald-400">
                 $ docker compose config
               </TypingAnimation>
-              {COMPOSE_PREVIEW.split("\n").map((line, i) => (
+              {composePreview(language, store).split("\n").map((line, i) => (
                 <AnimatedSpan key={i} className="text-muted-foreground">
                   {line}
                 </AnimatedSpan>
@@ -209,14 +233,14 @@ export function ExportWizard({
           </BlurFade>
 
           <BlurFade delay={0.3} inView>
-          <div className="flex items-center gap-3 pb-10">
+          <div className="flex flex-wrap items-center gap-3 pb-10">
             <RainbowButton onClick={downloadDsl} className="gap-2">
               {downloaded ? (
                 <Check className="h-4 w-4" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              {downloaded ? "Downloaded!" : "Download fsm.json"}
+              {downloaded ? "Downloaded!" : "Download fsm.json + registry.json"}
             </RainbowButton>
             <span className="text-xs text-muted-foreground">
               {dsl.states.length} states · full ZIP/git export lands in Phase 5

@@ -82,7 +82,7 @@ export function ProjectList({ projects }: { projects: Project[] }) {
 
   return (
     <div className="flex w-full flex-col gap-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold text-foreground">Your projects</h2>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger className="inline-flex items-center gap-2 rounded-lg border border-foreground bg-foreground px-4 py-2 text-sm font-semibold text-background transition-colors hover:bg-foreground/90">
@@ -118,15 +118,15 @@ export function ProjectList({ projects }: { projects: Project[] }) {
       </div>
 
       <div className="relative">
-        <div className="h-[400px] overflow-auto rounded-xl border border-foreground/10 bg-card shadow-[3px_4px_0_rgba(0,0,0,0.05)]">
+        <div className="max-h-[400px] min-h-[160px] overflow-auto rounded-xl border border-foreground/10 bg-card shadow-[3px_4px_0_rgba(0,0,0,0.05)]">
           <Table>
             <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card">
               <TableRow className="border-foreground/10 bg-foreground/5 hover:bg-foreground/5">
-                <TableHead className="w-[38%] text-muted-foreground">Name</TableHead>
-                <TableHead className="text-muted-foreground">States</TableHead>
-                <TableHead className="text-muted-foreground">Wires</TableHead>
-                <TableHead className="text-muted-foreground">Created</TableHead>
-                <TableHead className="w-[110px] text-right text-muted-foreground">
+                <TableHead className="text-muted-foreground sm:w-[38%]">Name</TableHead>
+                <TableHead className="hidden text-muted-foreground sm:table-cell">States</TableHead>
+                <TableHead className="hidden text-muted-foreground sm:table-cell">Wires</TableHead>
+                <TableHead className="hidden text-muted-foreground md:table-cell">Created</TableHead>
+                <TableHead className="w-[64px] text-right text-muted-foreground sm:w-[110px]">
                   Actions
                 </TableHead>
               </TableRow>
@@ -160,7 +160,7 @@ export function ProjectList({ projects }: { projects: Project[] }) {
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-2 border-foreground/20 bg-foreground/5 text-foreground">
                         <Workflow className="h-4 w-4" />
                       </span>
-                      <div className="min-w-0">
+                      <div className="min-w-0 max-w-[55vw] sm:max-w-none">
                         <p className="truncate font-semibold text-foreground">
                           {project.name}
                         </p>
@@ -172,18 +172,18 @@ export function ProjectList({ projects }: { projects: Project[] }) {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="font-mono text-sm text-foreground/80">
+                  <TableCell className="hidden font-mono text-sm text-foreground/80 sm:table-cell">
                     {stateCount}
                   </TableCell>
-                  <TableCell className="font-mono text-sm text-foreground/80">
+                  <TableCell className="hidden font-mono text-sm text-foreground/80 sm:table-cell">
                     {wireCount}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
+                  <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
                     {project.createdAt?.toLocaleDateString() ?? "—"}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <span className="flex items-center gap-1 text-xs font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                      <span className="hidden items-center gap-1 text-xs font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 sm:flex">
                         Open <ArrowRight className="h-3.5 w-3.5" />
                       </span>
                       <Button
@@ -214,7 +214,9 @@ export function ProjectList({ projects }: { projects: Project[] }) {
           </TableBody>
         </Table>
         </div>
-        <ProgressiveBlur position="bottom" height="26%" />
+        {/* Only fade the bottom when the list can actually scroll; otherwise
+            it blurred the last visible rows of a short list. */}
+        {projects.length > 6 && <ProgressiveBlur position="bottom" height="26%" />}
       </div>
     </div>
   );

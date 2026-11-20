@@ -125,11 +125,11 @@ export function FsmCanvas({
           size={1.6}
           color={dark ? "rgba(214,211,209,0.16)" : "rgba(87,83,78,0.22)"}
         />
-        <Controls className="!border-[var(--ink)]/20 !bg-[var(--paper)] [&_button]:!border-[var(--ink)]/15 [&_button]:!bg-[var(--paper)] [&_button]:!fill-[var(--ink)]" />
+        <Controls className="max-md:!bottom-[10rem] !border-[var(--ink)]/20 !bg-[var(--paper)] [&_button]:!border-[var(--ink)]/15 [&_button]:!bg-[var(--paper)] [&_button]:!fill-[var(--ink)]" />
         <MiniMap
           pannable
           zoomable
-          className="!border !border-[var(--ink)]/20 !bg-[var(--paper)]"
+          className="!border !border-[var(--ink)]/20 !bg-[var(--paper)] max-md:!hidden md:!bottom-16"
           nodeColor={dark ? "#57534e" : "#d6d3d1"}
           maskColor={dark ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.55)"}
         />

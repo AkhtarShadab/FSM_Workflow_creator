@@ -7,9 +7,12 @@ import {
   registerCustomState,
   registerSignal,
   registerSkill,
+  registerSysFuncTemplate,
   removeSignal,
   removeSkill,
+  removeSysFuncTemplate,
   type CustomStateType,
+  type CustomSysFuncTemplate,
   type ProjectRegistry,
 } from "@/lib/registry";
 
@@ -21,6 +24,8 @@ interface RegistryStore {
   addCustomState: (state: CustomStateType) => void;
   deleteSignal: (signal: string) => void;
   deleteSkill: (skillId: string) => void;
+  saveSysFuncTemplate: (template: CustomSysFuncTemplate) => void;
+  deleteSysFuncTemplate: (id: string) => void;
 }
 
 export const useRegistryStore = create<RegistryStore>()(
@@ -42,6 +47,10 @@ export const useRegistryStore = create<RegistryStore>()(
         set((s) => ({ registry: removeSignal(s.registry, signal) })),
       deleteSkill: (skillId) =>
         set((s) => ({ registry: removeSkill(s.registry, skillId) })),
+      saveSysFuncTemplate: (template) =>
+        set((s) => ({ registry: registerSysFuncTemplate(s.registry, template) })),
+      deleteSysFuncTemplate: (id) =>
+        set((s) => ({ registry: removeSysFuncTemplate(s.registry, id) })),
     }),
     { name: "fsm-project-registry" }
   )

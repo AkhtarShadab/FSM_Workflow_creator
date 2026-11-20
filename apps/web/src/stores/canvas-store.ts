@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -28,6 +28,54 @@ function nextId(type: FSMStateType) {
   counter += 1;
   return `${type === "START" ? "S0" : `S${type.slice(0, 2)}${counter}`}_${Date.now().toString(36)}`;
 }
+
+/**
+ * localStorage writes are synchronous and serialise *every* project's canvas.
+ * Without debouncing, persist ran JSON.stringify + setItem on every node-drag
+ * tick (~60/s), which made dragging janky on larger boards. Writes are
+ * coalesced and flushed when the tab is hidden / unloaded.
+ */
+const PERSIST_DEBOUNCE_MS = 250;
+const pendingWrites = new Map<string, string>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingWrites() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  for (const [key, value] of pendingWrites) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* quota / private mode — keep in-memory state */
+    }
+  }
+  pendingWrites.clear();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushPendingWrites);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPendingWrites();
+  });
+}
+
+const debouncedLocalStorage = {
+  getItem: (key: string) => pendingWrites.get(key) ?? localStorage.getItem(key),
+  setItem: (key: string, value: string) => {
+    pendingWrites.set(key, value);
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushPendingWrites, PERSIST_DEBOUNCE_MS);
+  },
+  removeItem: (key: string) => {
+    pendingWrites.delete(key);
+    localStorage.removeItem(key);
+  },
+};
+
+/** Test/e2e helper: force pending canvas writes to localStorage now. */
+export const flushCanvasPersistence = flushPendingWrites;
 
 /**
  * Edge ids must be unique even when two edges between the same pair are
@@ -339,6 +387,60 @@ export const useCanvasStore = create<CanvasStore>()(
           selectedEdgeId: null,
         })),
     }),
-    { name: "fsm-canvas-store" }
+    {
+      name: "fsm-canvas-store",
+      storage: createJSONStorage(() => debouncedLocalStorage),
+      // Selection is per-session UI state. Persisting it re-opened a stale
+      // inspector on every visit (and leaked across projects).
+      partialize: (state) => ({
+        canvases: state.canvases,
+        preferredSignal: state.preferredSignal,
+      }),
+      // Ignore selection saved by older builds that persisted it.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<CanvasStore>;
+        return {
+          ...current,
+          canvases: p.canvases ?? current.canvases,
+          preferredSignal: p.preferredSignal ?? current.preferredSignal,
+        };
+      },
+    }
   )
 );
+
+const EMPTY_NODE_LIST: StateNode[] = [];
+
+/**
+ * True when two node lists differ only in position / selection / measured
+ * size — i.e. nothing lint, the inspector or the DSL care about.
+ * `applyNodeChanges` keeps `node.data` by reference for those changes.
+ */
+export function sameLogicalNodes(a: StateNode[], b: StateNode[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].data !== b[i].data) return false;
+  }
+  return true;
+}
+
+/**
+ * Subscribe to a project's nodes, ignoring drag/selection/resize churn.
+ * Components using this (inspector, lint, DSL preview…) no longer re-render
+ * ~60×/s while a sticky is being dragged.
+ */
+const logicalNodesCache = new Map<string, StateNode[]>();
+
+/** Returns the cached list while only positions/selection/sizes change. */
+function selectLogicalNodes(s: CanvasStore, projectId: string): StateNode[] {
+  const next = s.canvases[projectId]?.nodes ?? EMPTY_NODE_LIST;
+  const prev = logicalNodesCache.get(projectId);
+  if (prev && sameLogicalNodes(prev, next)) return prev;
+  logicalNodesCache.set(projectId, next);
+  return next;
+}
+
+export function useLogicalNodes(projectId: string): StateNode[] {
+  return useCanvasStore((s) => selectLogicalNodes(s, projectId));
+}

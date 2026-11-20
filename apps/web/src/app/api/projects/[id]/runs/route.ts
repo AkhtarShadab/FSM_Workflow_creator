@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { projects } from "@/db/schema";
+import { fsmDefinitions, projects, runEvents, runs } from "@/db/schema";
 import { startProjectRun } from "@/lib/run-engine";
 import type { CanvasData } from "@/lib/fsm-types";
 
@@ -51,4 +51,67 @@ export async function POST(
       { status: 500 }
     );
   }
+}
+
+/**
+ * Run history for a project (newest first) with each run's events.
+ * Query: ?limit=N (default 20, max 100).
+ */
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+  const projectId = Number(id);
+  if (!Number.isInteger(projectId) || projectId <= 0) {
+    return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  }
+  const limitParam = Number(new URL(request.url).searchParams.get("limit") ?? 20);
+  const limit = Math.min(100, Math.max(1, Number.isFinite(limitParam) ? limitParam : 20));
+
+  const rows = await db
+    .select({
+      id: runs.id,
+      status: runs.status,
+      startedAt: runs.startedAt,
+      endedAt: runs.endedAt,
+    })
+    .from(runs)
+    .innerJoin(fsmDefinitions, eq(runs.fsmId, fsmDefinitions.id))
+    .where(eq(fsmDefinitions.projectId, projectId))
+    .orderBy(desc(runs.id))
+    .limit(limit);
+
+  const ids = rows.map((r) => r.id);
+  const events =
+    ids.length > 0
+      ? await db
+          .select()
+          .from(runEvents)
+          .where(inArray(runEvents.runId, ids))
+          .orderBy(runEvents.id)
+      : [];
+
+  const byRun = new Map<number, Array<{ stateId: string; kind: string; message: string }>>();
+  for (const ev of events) {
+    let message = "";
+    try {
+      message = String((JSON.parse(ev.payloadJson ?? "{}") as { message?: unknown }).message ?? "");
+    } catch {
+      message = ev.payloadJson ?? "";
+    }
+    const list = byRun.get(ev.runId) ?? [];
+    list.push({ stateId: ev.stateId, kind: ev.kind, message });
+    byRun.set(ev.runId, list);
+  }
+
+  return NextResponse.json({
+    runs: rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      startedAt: r.startedAt?.getTime() ?? null,
+      endedAt: r.endedAt?.getTime() ?? null,
+      events: byRun.get(r.id) ?? [],
+    })),
+  });
 }

@@ -14,7 +14,7 @@ import {
   type EdgeKind,
   type TransitionEdge,
 } from "@/lib/fsm-types";
-import { useCanvasStore } from "@/stores/canvas-store";
+import { useCanvasStore, useLogicalNodes } from "@/stores/canvas-store";
 
 const KIND_STYLES: Record<EdgeKind, { badge: string; label: string }> = {
   script: {
@@ -36,13 +36,12 @@ const KIND_STYLES: Record<EdgeKind, { badge: string; label: string }> = {
 };
 
 const EMPTY_EDGES: TransitionEdge[] = [];
-const EMPTY_NODES: import("@/lib/fsm-types").StateNode[] = [];
 
 /** Edge inspector — click any edge to re-route its signal (§6.1 grammar) */
 export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const selectedEdgeId = useCanvasStore((s) => s.selectedEdgeId);
   const edges = useCanvasStore((s) => s.canvases[projectId]?.edges) ?? EMPTY_EDGES;
-  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes) ?? EMPTY_NODES;
+  const nodes = useLogicalNodes(projectId);
   const selectEdge = useCanvasStore((s) => s.selectEdge);
   const updateEdgeSignal = useCanvasStore((s) => s.updateEdgeSignal);
   const removeEdge = useCanvasStore((s) => s.removeEdge);
@@ -63,7 +62,7 @@ export function EdgeInspectorPanel({ projectId }: { projectId: string }) {
   const topologyKind = edge.data?.kind ?? "transition";
 
   return (
-    <aside className="absolute top-4 right-4 bottom-4 z-20 w-[min(380px,92vw)]">
+    <aside className="absolute top-2 right-2 bottom-2 z-[25] w-[min(380px,calc(100%-1rem))] sm:top-4 sm:right-4 sm:bottom-4">
       <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-foreground/10 bg-background/90 backdrop-blur-md">
         <div className="flex items-center justify-between gap-2 p-4 pb-3">
           <Badge

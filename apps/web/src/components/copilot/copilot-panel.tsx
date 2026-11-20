@@ -137,8 +137,8 @@ export function CopilotPanel({ projectId }: { projectId: string }) {
       <Button
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "absolute bottom-6 z-20 h-11 gap-2 rounded-xl border-2 border-[var(--ink)]/20 bg-[var(--paper)] text-[var(--ink)] shadow-[2px_3px_0_rgba(0,0,0,0.12)] backdrop-blur-sm hover:bg-[var(--paper)] hover:shadow-[3px_4px_0_rgba(0,0,0,0.14)]",
-          open ? "right-4 sm:right-[444px]" : "right-4 sm:right-6"
+          "absolute bottom-[7.25rem] z-20 h-11 gap-2 rounded-xl md:bottom-4 border-2 border-[var(--ink)]/20 bg-[var(--paper)] text-[var(--ink)] shadow-[2px_3px_0_rgba(0,0,0,0.12)] backdrop-blur-sm hover:bg-[var(--paper)] hover:shadow-[3px_4px_0_rgba(0,0,0,0.14)]",
+          open ? "right-2 md:right-[444px]" : "right-2 md:right-4"
         )}
       >
         {open ? (
@@ -151,9 +151,9 @@ export function CopilotPanel({ projectId }: { projectId: string }) {
 
       <div
         className={cn(
-          "absolute right-4 bottom-20 z-20 flex w-[min(420px,92vw)] flex-col overflow-hidden rounded-2xl border-2 border-[var(--ink)]/15 bg-[var(--paper)] shadow-[5px_6px_0_rgba(0,0,0,0.10)] transition-all duration-300",
+          "absolute right-2 bottom-[10.5rem] z-20 flex w-[min(420px,calc(100%-1rem))] flex-col md:right-4 md:bottom-4 overflow-hidden rounded-2xl border-2 border-[var(--ink)]/15 bg-[var(--paper)] shadow-[5px_6px_0_rgba(0,0,0,0.10)] transition-all duration-300",
           open
-            ? "pointer-events-auto h-[540px] opacity-100"
+            ? "pointer-events-auto h-[min(540px,calc(100%-12rem))] opacity-100 md:h-[min(540px,calc(100%-2rem))]"
             : "pointer-events-none h-0 opacity-0"
         )}
       >

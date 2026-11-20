@@ -69,6 +69,39 @@ New test files:
 
 ---
 
+## D. Pass 2: responsiveness and missing functionality
+
+A second review in the running app at 390px (phone), 768px and 1280px widths, comparing each screen with FeatureShipping 001.
+
+### Responsiveness
+
+| # | Problem | Fix |
+|---|---------|-----|
+| D1 | **Mobile browsers zoomed the app out.** The project nav bar (665px wide) and the closed inspector drawer (translated off-screen, not clipped) widened the page to 768px on a 390px phone. | Responsive nav: icon-only tabs on phones, scrollable instead of overflowing, compact BYOK chip. The canvas `<main>` clips overflow. Closed drawers are `invisible` and non-interactive. |
+| D2 | **Canvas felt sluggish while dragging.** Every drag tick wrote *all* canvases to `localStorage`, and re-rendered the inspector (including CodeMirror), the lint panel, and the DSL preview (computed even while closed). Each AGGREGATE sticky also re-rendered via `useNodes()`. | Persistence is debounced (250 ms) and flushed on `pagehide` / tab hide. Added `useLogicalNodes`, which ignores position, selection and size churn. The DSL is built only while its dialog is open. AGGREGATE chips use a data-only `useStore` selector. |
+| D3 | **Selects showed raw IDs.** base-ui `Select` shows the raw value unless given an `items` label map, so triggers read `cred_mwo…`, `SSP2_mwonjz7p`, `credId:model` or `__none`. | Every ID-valued select (credential, model, condition target, From SPAWN, router head, rewire from/to, memory edge ends, provider, signal) now passes label maps. |
+| D4 | **Bottom-corner widgets overlapped.** On desktop, the Copilot button covered the lint panel's toggle. On phones, both covered the bottom state palette and the minimap. | Re-laid out: on phones, lint and Copilot sit above the palette and the minimap is hidden. On desktop, lint sits left of Copilot. The desktop palette is height-capped. Inspectors layer above Copilot. |
+| D5 | **The project table hid its actions on phones.** The Actions column (open/delete) was cut off, and a fixed 400px box left a large empty area. A progressive blur also covered the last rows of short lists. | Secondary columns hide on small screens, the box uses `max-h`, and the blur appears only when the list scrolls. |
+| D6 | **"Open canvas" button was unreadable.** It was white-on-white in dark mode. | Fixed the `RainbowButton` text colour per theme. |
+| D7 | **The Describe sheet re-opened on every canvas visit.** It covered the board each time, and stale selections re-opened inspectors. | It opens only on an empty board. Selection is no longer persisted, and old persisted selections are ignored. |
+| D8 | **Full-height pages used `h-screen`.** They were cut off under mobile browser toolbars. | Switched to `h-dvh`. Also: responsive padding on Export and Registry, and a wrapping Describe button row. |
+
+### Missing or stubbed functionality
+
+| # | Feature (doc reference) | Before | Now |
+|---|------------------------|--------|-----|
+| D9 | Heterogeneous SPAWN, per-child tool/skill/model packs (§3.8) | Only profile 0 could be edited | Child picker (`default`, `p1`, `p2`…) edits each profile's FSM, tools, skills, credential and model |
+| D10 | Run history and Stop (§C5) | Hard-coded `MOCK_RUNS`; Stop always disabled; fixed S0→S1→S2 demo animation | `GET /api/projects/:id/runs` lists real runs with events. Click a run to replay its events, and see the actual visited-state path. Stop aborts the request. Events read top-down |
+| D11 | SPAWN ↔ AGGREGATE pairing (§10.3) | "Aggregate to" was a free-text ID | Dropdown of AGGREGATE states that also sets or clears the AGGREGATE's `fromSpawnId` |
+| D12 | Multi-BYOK pickers (§3.5) | SPAWN child and EXTERNAL_AI credentials were free-text IDs | Credential dropdown with broken-reference warning, plus model suggestions from discovery |
+| D13 | SYS_FUNC templates (§3.6) | Data model only, with no way to create or use one | "Save as template" / "Apply template" in the SYS_FUNC inspector. Templates are listed and deletable in the Registry |
+| D14 | Export bundle includes registry (§3.6) | Registry said "Included in harness export" but it wasn't | Export downloads `fsm.json` + `registry.json`, and the compose preview follows the chosen language and store |
+| D15 | Linter usability | Issues were plain text | Clicking an issue selects and centres its state |
+
+**Tests:** `apps/web/src/lib/ui-pass-2.test.ts` covers the drag-churn filter and template operations. Totals are now 80 unit tests, both typechecks pass, `next build` passes, and ESLint problems are down from 17 to 13 (none new). All of the above was checked in the running app.
+
+---
+
 ## Recommended follow-ups (not changed here)
 
 These are design decisions or larger changes that belong to the maintainer.
@@ -76,7 +109,7 @@ These are design decisions or larger changes that belong to the maintainer.
 1. **DNS rebinding, a TOCTOU gap in the SSRF guard.** The discover route resolves DNS, then `fetch` resolves it again. Pin the vetted IP with an undici `Agent` `connect.lookup` hook.
 2. **The SSRF guard blocks local LLM proxies.** The default base URL for "OpenAI-compatible proxy" is `http://localhost:4000`, so discovery for it always fails. Consider a dev-only allowlist env var such as `DISCOVERY_ALLOW_PRIVATE=1`.
 3. **API keys are stored in plaintext.** They live in `localStorage` (`fsm-credential-store`) and are posted to the server on every discovery. This is known (§14 and FeatureShipping 005), but it is the largest remaining security gap.
-4. **The Runs page is partly mock.** "Run history" is hard-coded `MOCK_RUNS`, not the `runs` table. The **Stop** button is always disabled while a run is in flight, so it does nothing.
+4. ~~**The Runs page is partly mock.**~~ Fixed in pass 2 (D10).
 5. **AGGREGATE re-pairing leaves a stale back-reference.** Picking a SPAWN that was already paired with another AGGREGATE leaves that AGGREGATE's `fromSpawnId` stale. Lint catches it; the inspector could clear it.
 6. **Re-targeting a condition drops data.** The Conditions card re-targets with remove + add, which drops `sourceHandle`/`targetHandle` and changes the edge ID.
 7. **SYS_FUNC enable map must list END.** With an enable map, END must be listed explicitly or it is treated as disabled (lint `MASK_NO_PATH_TO_END` and the engine both enforce this). Consider always-enabling `START`/`END`, or documenting it in the card.
@@ -91,3 +124,5 @@ These are design decisions or larger changes that belong to the maintainer.
             if: hashFiles('packages/fsm-engine/package.json') != ''
             run: pnpm --filter @fsm/engine typecheck
     ```
+12. **Canvases live only in browser `localStorage`.** They are not saved to Turso, so another browser or device sees an empty board. Only run snapshots reach `fsm_definitions`. Add a canvas save/load table or API.
+13. **Custom state types (§3.6) have no UI** to register them or place them on the canvas; only signals, skills and SYS_FUNC templates do.
