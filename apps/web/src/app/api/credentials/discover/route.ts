@@ -4,7 +4,11 @@ import {
   discoverModels,
   type DiscoveryProvider,
 } from "@/lib/model-discovery";
-import { isPrivateAddress, validatePublicHttpUrl } from "@/lib/url-guard";
+import {
+  bareHostname,
+  isPrivateAddress,
+  validatePublicHttpUrl,
+} from "@/lib/url-guard";
 
 /**
  * Discover models for a BYOK credential.
@@ -44,7 +48,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: guard.error }, { status: 400 });
   }
   try {
-    const addresses = await lookup(guard.url.hostname, { all: true });
+    // IPv6 literals keep their brackets in URL.hostname; dns.lookup needs them stripped.
+    const addresses = await lookup(bareHostname(guard.url), { all: true });
     if (addresses.some((a) => isPrivateAddress(a.address))) {
       return NextResponse.json(
         { error: "Host resolves to a private or internal address" },

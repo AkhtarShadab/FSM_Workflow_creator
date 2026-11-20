@@ -30,8 +30,30 @@ export function isDiscoveryStale(
   return now - discoveredAt > ttlMs;
 }
 
-function normalizeBase(url: string): string {
-  return url.replace(/\/+$/, "");
+/**
+ * Strip trailing slashes and a trailing `/v1` so both
+ * `https://api.openai.com` and `https://api.openai.com/v1` hit `/v1/models`
+ * (previously the latter produced `/v1/v1/models` → 404).
+ */
+export function normalizeBase(url: string): string {
+  return url.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
+/**
+ * Discovery runs server-side with the user's API key. Never follow redirects:
+ * a public host could otherwise 30x the request to an internal address and
+ * bypass the SSRF guard (which only vets the initial URL).
+ */
+const NO_REDIRECT: RequestInit = { redirect: "manual" };
+
+function redirectError(res: Response): DiscoverResult | null {
+  if (res.status >= 300 && res.status < 400) {
+    return { ok: false, error: `Redirects are not followed (HTTP ${res.status})` };
+  }
+  if (res.type === "opaqueredirect") {
+    return { ok: false, error: "Redirects are not followed" };
+  }
+  return null;
 }
 
 async function discoverOpenAiCompatible(
@@ -41,10 +63,13 @@ async function discoverOpenAiCompatible(
   const base = normalizeBase(input.baseUrl);
   try {
     const res = await fetchFn(`${base}/v1/models`, {
+      ...NO_REDIRECT,
       headers: {
         Authorization: `Bearer ${input.apiKey}`,
       },
     });
+    const redirected = redirectError(res);
+    if (redirected) return redirected;
     if (!res.ok) {
       return { ok: false, error: `HTTP ${res.status}` };
     }
@@ -71,11 +96,14 @@ async function discoverAnthropic(input: DiscoverInput): Promise<DiscoverResult> 
   const base = normalizeBase(input.baseUrl);
   try {
     const res = await fetchFn(`${base}/v1/models`, {
+      ...NO_REDIRECT,
       headers: {
         "x-api-key": input.apiKey,
         "anthropic-version": "2023-06-01",
       },
     });
+    const redirected = redirectError(res);
+    if (redirected) return redirected;
     if (!res.ok) {
       // Anthropic may not expose /v1/models on all deployments — fall back catalog
       if (res.status === 404) {

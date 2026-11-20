@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { canvasToDsl, lintCanvas } from "@/lib/canvas-to-dsl";
-import { useCanvasStore } from "@/stores/canvas-store";
+import { useCanvasStore, useLogicalNodes } from "@/stores/canvas-store";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useRegistryStore } from "@/stores/registry-store";
 import { cn } from "@/lib/utils";
@@ -26,16 +26,22 @@ export function DslPreviewDialog({
   projectId: string;
   projectName: string;
 }) {
-  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes);
+  const nodes = useLogicalNodes(projectId);
   const edges = useCanvasStore((s) => s.canvases[projectId]?.edges);
   const credentials = useCredentialStore((s) => s.credentials);
   const registry = useRegistryStore((s) => s.registry);
   const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
 
-  const { dsl, issues } = useMemo(() => {
+  // Only build the DSL + lint while the dialog is open — this lives in the
+  // always-mounted toolbar and used to recompute on every canvas change.
+  const { dsl, issues, json } = useMemo(() => {
+    if (!open) return { dsl: null, issues: [], json: "" };
     const canvas = { nodes: nodes ?? [], edges: edges ?? [] };
+    const dsl = canvasToDsl(canvas, { name: projectName });
     return {
-      dsl: canvasToDsl(canvas, { name: projectName }),
+      dsl,
+      json: JSON.stringify(dsl, null, 2),
       issues: lintCanvas(canvas, {
         registry,
         credentials: credentials.map((c) => ({
@@ -45,9 +51,8 @@ export function DslPreviewDialog({
         })),
       }),
     };
-  }, [nodes, edges, projectName, credentials, registry]);
+  }, [open, nodes, edges, projectName, credentials, registry]);
 
-  const json = JSON.stringify(dsl, null, 2);
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");
 
@@ -58,15 +63,15 @@ export function DslPreviewDialog({
   };
 
   return (
-    <Dialog>
-      <DialogTrigger className="inline-flex items-center justify-center gap-2 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-white">
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger className="inline-flex items-center justify-center gap-2 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-white" title="View DSL" aria-label="View DSL">
         <FileJson className="h-4 w-4" />
-        View DSL
+        <span className="hidden xl:inline">View DSL</span>
       </DialogTrigger>
       <DialogContent className="max-w-2xl border-foreground/10 bg-background text-foreground">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
-            <span>FSM Definition DSL (v{dsl.version})</span>
+            <span>FSM Definition DSL (v{dsl?.version ?? 1})</span>
             <Button variant="ghost" size="sm" onClick={copy} className="gap-1.5">
               {copied ? (
                 <Check className="h-4 w-4 text-emerald-400" />

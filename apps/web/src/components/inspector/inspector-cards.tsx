@@ -38,10 +38,13 @@ import {
   normalizeSpawn,
   normalizeSystemFunction,
   primaryProfile,
+  spawnWorkerCount,
+  syncHeterogeneousProfiles,
 } from "@/lib/fsm-types";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useScriptTemplateStore } from "@/stores/script-template-store";
 import { useCanvasStore } from "@/stores/canvas-store";
+import { useRegistryStore } from "@/stores/registry-store";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
@@ -228,6 +231,10 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Credential (BYOK)</Label>
           <Select
+            items={{
+              ...(ai.credentialId ? { [ai.credentialId]: `${ai.credentialId} (deleted)` } : {}),
+              ...Object.fromEntries(credentials.map((c) => [c.id, `${c.label || c.provider}${c.active ? "" : " (inactive)"}`])),
+            }}
             value={ai.credentialId || undefined}
             onValueChange={(v) =>
               patch({
@@ -277,6 +284,7 @@ export function GenerativeConfigCard({ node, patch }: CardProps) {
               : "(default list)"}
           </Label>
           <Select
+            items={unionModels.length > 0 ? Object.fromEntries(unionModels.map((m) => [`${m.credentialId}:${m.modelId}`, m.label])) : undefined}
             value={selectedModelValue}
             onValueChange={(v) => {
               if (typeof v !== "string") return;
@@ -546,6 +554,102 @@ export function GuardrailsCard({ node, patch }: CardProps) {
   );
 }
 
+/** Label map for base-ui `Select` so triggers show names, not raw ids. */
+function nodeLabelItems(nodes: StateNode[]): Record<string, string> {
+  return Object.fromEntries(nodes.map((n) => [n.id, n.data.label || n.id]));
+}
+
+/** Pick a BYOK credential from the pool (was a free-text id field). */
+function CredentialSelect({
+  value,
+  onChange,
+  testId,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  testId?: string;
+}) {
+  const credentials = useCredentialStore((s) => s.credentials);
+  const broken = Boolean(value) && !credentials.some((c) => c.id === value);
+  return (
+    <>
+      <Select
+        items={{ __none: credentials.length === 0 ? "No credentials — add in Settings" : "— none —", ...Object.fromEntries(credentials.map((c) => [c.id, `${c.label || c.provider}${c.active ? "" : " (inactive)"}`])), ...(broken ? { [value]: `${value} (deleted)` } : {}) }}
+        value={value || "__none"}
+        onValueChange={(v) => {
+          if (typeof v === "string") onChange(v === "__none" ? "" : v);
+        }}
+      >
+        <SelectTrigger
+          className={cn(
+            "h-8 border-foreground/10 bg-foreground/5 text-xs",
+            broken && "border-red-400/50"
+          )}
+          data-testid={testId}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="border-foreground/10 bg-popover text-foreground">
+          <SelectItem value="__none" className="text-xs">
+            {credentials.length === 0 ? "No credentials — add in Settings" : "— none —"}
+          </SelectItem>
+          {credentials.map((c) => (
+            <SelectItem key={c.id} value={c.id} className="text-xs">
+              {c.label || c.provider}
+              {!c.active ? " (inactive)" : ""}
+            </SelectItem>
+          ))}
+          {broken && (
+            <SelectItem value={value} className="text-xs text-red-400">
+              {value} (deleted)
+            </SelectItem>
+          )}
+        </SelectContent>
+      </Select>
+      {broken && (
+        <p className="text-[10px] text-red-500 dark:text-red-300">
+          Credential reference is broken (deleted).
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Model id input with suggestions from the chosen credential's discovery. */
+function ModelInput({
+  credentialId,
+  value,
+  onChange,
+  listId,
+}: {
+  credentialId?: string;
+  value: string;
+  onChange: (v: string) => void;
+  listId: string;
+}) {
+  const credentials = useCredentialStore((s) => s.credentials);
+  const cred = credentials.find((c) => c.id === credentialId);
+  const models = cred
+    ? cred.models
+    : credentials.filter((c) => c.active).flatMap((c) => c.models);
+  return (
+    <>
+      <Input
+        value={value}
+        list={listId}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={models[0] ?? "model id"}
+        className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+      />
+      <datalist id={listId}>
+        {[...new Set(models)].map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+    </>
+  );
+}
+
 const SPAWN_TABS = [
   "Topology",
   "Tools",
@@ -563,19 +667,112 @@ function csvToList(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** SPAWN-state config — Topology | Tools | Skills | Models | Aggregation */
-export function SpawnCard({ node, patch }: CardProps) {
-  const [tab, setTab] = useState<SpawnTab>("Topology");
-  const spawn = normalizeSpawn(node.data.spawn);
-  const profile = primaryProfile(spawn);
+/**
+ * Comma/newline list editor. Keeps the raw text locally so separators and
+ * trailing spaces survive while typing — the previous controlled
+ * `value={list.join(", ")}` re-parsed every keystroke and stripped the comma
+ * you just typed, making it impossible to enter a second item.
+ */
+function ListTextarea({
+  list,
+  onChange,
+  placeholder,
+}: {
+  list: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(() => list.join(", "));
+  const joined = list.join("\u0000");
+  const [lastJoined, setLastJoined] = useState(joined);
+  // Re-sync when the list changes from outside (node switch, undo, …)
+  if (joined !== lastJoined) {
+    setLastJoined(joined);
+    if (csvToList(draft).join("\u0000") !== joined) setDraft(list.join(", "));
+  }
+  return (
+    <Textarea
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const next = csvToList(e.target.value);
+        setLastJoined(next.join("\u0000"));
+        onChange(next);
+      }}
+      placeholder={placeholder}
+      className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
+    />
+  );
+}
 
-  const setSpawn = (next: SpawnConfig) => patch({ spawn: next });
+/** SPAWN-state config — Topology | Tools | Skills | Models | Aggregation */
+export function SpawnCard({
+  node,
+  patch,
+  allNodes = [],
+  projectId,
+}: CardProps & { allNodes?: StateNode[]; projectId?: string }) {
+  const [tab, setTab] = useState<SpawnTab>("Topology");
+  const [profileIdx, setProfileIdx] = useState(0);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const spawn = normalizeSpawn(node.data.spawn);
+  // Heterogeneous: edit any child's profile (§3.8); homogeneous: the one profile.
+  const activeIdx =
+    spawn.mode === "heterogeneous"
+      ? Math.min(profileIdx, Math.max(0, spawn.profiles.length - 1))
+      : 0;
+  const profile = spawn.profiles[activeIdx] ?? primaryProfile(spawn);
+  const aggregates = allNodes.filter((n) => n.data.stateType === "AGGREGATE");
+
+  // Heterogeneous spawns need one profile per child; keep the profile list
+  // sized to `count` (otherwise SPAWN_PROFILE_MISMATCH could never be
+  // resolved from the UI).
+  const setSpawn = (next: SpawnConfig) =>
+    patch({ spawn: syncHeterogeneousProfiles(next) });
 
   const patchProfile = (partial: Partial<typeof profile>) => {
     const profiles = [...spawn.profiles];
-    profiles[0] = { ...profile, ...partial };
+    profiles[activeIdx] = { ...profile, ...partial };
     setSpawn({ ...spawn, profiles });
   };
+
+  /** Pair with an AGGREGATE and keep its fromSpawnId back-ref in sync (§10.3). */
+  const setAggregateTo = (aggId: string) => {
+    setSpawn({ ...spawn, aggregateTo: aggId });
+    if (!projectId) return;
+    for (const agg of aggregates) {
+      const cfg = normalizeAggregate(agg.data.aggregate);
+      if (agg.id === aggId) {
+        updateNodeData(projectId, agg.id, {
+          aggregate: { ...cfg, fromSpawnId: node.id, strategy: spawn.strategy },
+        });
+      } else if (cfg.fromSpawnId === node.id) {
+        updateNodeData(projectId, agg.id, { aggregate: { ...cfg, fromSpawnId: "" } });
+      }
+    }
+  };
+
+  const profilePicker =
+    spawn.mode === "heterogeneous" && spawn.profiles.length > 1 ? (
+      <div className="mb-3 flex flex-wrap items-center gap-1" data-testid="spawn-profile-picker">
+        <span className="mr-1 text-[10px] text-muted-foreground uppercase">Child</span>
+        {spawn.profiles.map((p, i) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setProfileIdx(i)}
+            className={cn(
+              "rounded-md border px-2 py-0.5 font-mono text-[10px]",
+              i === activeIdx
+                ? "border-foreground/30 bg-foreground/10 text-foreground"
+                : "border-foreground/10 text-muted-foreground hover:bg-foreground/5"
+            )}
+          >
+            {p.id}
+          </button>
+        ))}
+      </div>
+    ) : null;
 
   return (
     <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
@@ -600,6 +797,9 @@ export function SpawnCard({ node, patch }: CardProps) {
           </button>
         ))}
       </div>
+
+      {(tab === "Tools" || tab === "Skills" || tab === "Models" || tab === "Topology") &&
+        profilePicker}
 
       {tab === "Topology" && (
         <div className="space-y-3">
@@ -637,8 +837,12 @@ export function SpawnCard({ node, patch }: CardProps) {
               <Input
                 type="number"
                 value={spawn.count}
+                min={1}
                 onChange={(e) =>
-                  setSpawn({ ...spawn, count: Number(e.target.value) })
+                  setSpawn({
+                    ...spawn,
+                    count: Math.max(1, Math.floor(Number(e.target.value)) || 1),
+                  })
                 }
                 className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
               />
@@ -684,11 +888,11 @@ export function SpawnCard({ node, patch }: CardProps) {
           <Label className="text-xs text-muted-foreground">
             Tool pack (comma / newline separated)
           </Label>
-          <Textarea
-            value={profile.toolPack.join(", ")}
-            onChange={(e) => patchProfile({ toolPack: csvToList(e.target.value) })}
+          <ListTextarea
+            key={`${node.id}-${profile.id}-tools`}
+            list={profile.toolPack}
+            onChange={(toolPack) => patchProfile({ toolPack })}
             placeholder="fetch_pages, write_report"
-            className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
           />
         </div>
       )}
@@ -698,13 +902,11 @@ export function SpawnCard({ node, patch }: CardProps) {
           <Label className="text-xs text-muted-foreground">
             Skill pack (opaque skill ids)
           </Label>
-          <Textarea
-            value={profile.skillPack.join(", ")}
-            onChange={(e) =>
-              patchProfile({ skillPack: csvToList(e.target.value) })
-            }
+          <ListTextarea
+            key={`${node.id}-${profile.id}-skills`}
+            list={profile.skillPack}
+            onChange={(skillPack) => patchProfile({ skillPack })}
             placeholder="ship-feature, code-review"
-            className="min-h-[80px] border-foreground/10 bg-foreground/5 font-mono text-xs"
           />
         </div>
       )}
@@ -713,24 +915,21 @@ export function SpawnCard({ node, patch }: CardProps) {
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
-              Child credential id
+              Child credential
             </Label>
-            <Input
+            <CredentialSelect
               value={profile.credentialId ?? ""}
-              onChange={(e) =>
-                patchProfile({ credentialId: e.target.value || undefined })
-              }
-              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              onChange={(id) => patchProfile({ credentialId: id || undefined })}
+              testId="spawn-child-credential"
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Child model id</Label>
-            <Input
+            <Label className="text-xs text-muted-foreground">Child model</Label>
+            <ModelInput
+              credentialId={profile.credentialId}
               value={profile.modelId ?? ""}
-              onChange={(e) =>
-                patchProfile({ modelId: e.target.value || undefined })
-              }
-              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+              onChange={(v) => patchProfile({ modelId: v || undefined })}
+              listId={`models-${node.id}-${profile.id}`}
             />
           </div>
         </div>
@@ -765,8 +964,16 @@ export function SpawnCard({ node, patch }: CardProps) {
               <Input
                 type="number"
                 value={spawn.quorumK ?? 1}
+                min={1}
+                max={spawnWorkerCount(spawn)}
                 onChange={(e) =>
-                  setSpawn({ ...spawn, quorumK: Number(e.target.value) })
+                  setSpawn({
+                    ...spawn,
+                    quorumK: Math.min(
+                      spawnWorkerCount(spawn),
+                      Math.max(1, Math.floor(Number(e.target.value)) || 1)
+                    ),
+                  })
                 }
                 className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
               />
@@ -774,16 +981,44 @@ export function SpawnCard({ node, patch }: CardProps) {
           )}
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
-              Aggregate to (state id)
+              Aggregate to
             </Label>
-            <Input
-              value={spawn.aggregateTo}
-              onChange={(e) =>
-                setSpawn({ ...spawn, aggregateTo: e.target.value })
-              }
-              placeholder="AGG_1"
-              className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
-            />
+            <Select
+              items={{ __none: "— none —", ...nodeLabelItems(aggregates), ...(spawn.aggregateTo && !aggregates.some((a) => a.id === spawn.aggregateTo) ? { [spawn.aggregateTo]: `${spawn.aggregateTo} (missing)` } : {}) }}
+              value={spawn.aggregateTo || "__none"}
+              onValueChange={(v) => {
+                if (typeof v !== "string") return;
+                setAggregateTo(v === "__none" ? "" : v);
+              }}
+            >
+              <SelectTrigger
+                className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+                data-testid="spawn-aggregate-to"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                <SelectItem value="__none" className="text-xs">
+                  — none —
+                </SelectItem>
+                {aggregates.map((a) => (
+                  <SelectItem key={a.id} value={a.id} className="text-xs">
+                    {a.data.label}
+                  </SelectItem>
+                ))}
+                {spawn.aggregateTo &&
+                  !aggregates.some((a) => a.id === spawn.aggregateTo) && (
+                    <SelectItem value={spawn.aggregateTo} className="text-xs text-red-400">
+                      {spawn.aggregateTo} (missing)
+                    </SelectItem>
+                  )}
+              </SelectContent>
+            </Select>
+            {aggregates.length === 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                Add an AGGREGATE state to pair this SPAWN with.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -1134,6 +1369,7 @@ export function AggregateCard({
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">From SPAWN</Label>
           <Select
+            items={nodeLabelItems(spawns)}
             value={aggregate.fromSpawnId || undefined}
             onValueChange={(v) => {
               if (typeof v !== "string" || !v) return;
@@ -1278,6 +1514,7 @@ export function ConditionsCard({
                 className="h-7 border-foreground/10 bg-foreground/5 font-mono text-[10px]"
               />
               <Select
+                items={nodeLabelItems(allNodes)}
                 value={e.target}
                 onValueChange={(v) => {
                   if (typeof v !== "string" || !v) return;
@@ -1359,19 +1596,20 @@ export function ExternalAICard({ node, patch }: CardProps) {
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Credential id</Label>
-          <Input
+          <Label className="text-xs text-muted-foreground">Credential</Label>
+          <CredentialSelect
             value={ea.credentialId}
-            onChange={(e) => patchEa({ credentialId: e.target.value })}
-            className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            onChange={(id) => patchEa({ credentialId: id })}
+            testId="external-ai-credential"
           />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Model</Label>
-          <Input
+          <ModelInput
+            credentialId={ea.credentialId || undefined}
             value={ea.model}
-            onChange={(e) => patchEa({ model: e.target.value })}
-            className="h-8 border-foreground/10 bg-foreground/5 font-mono text-xs"
+            onChange={(v) => patchEa({ model: v })}
+            listId={`models-${node.id}-ext`}
           />
         </div>
         <div className="space-y-1.5">
@@ -1419,6 +1657,35 @@ export function SystemFunctionCard({
   const patchSf = (partial: Partial<typeof sf>) =>
     patch({ systemFunction: { ...sf, ...partial } });
 
+  // §3.6 reusable SYS_FUNC templates (enable map + rewire + strategy)
+  const templates = useRegistryStore((s) => s.registry.sysFuncTemplates);
+  const saveTemplate = useRegistryStore((s) => s.saveSysFuncTemplate);
+  const [templateName, setTemplateName] = useState("");
+  const nodeIds = new Set(allNodes.map((n) => n.id));
+  const applyTemplate = (id: string) => {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    // Drop ids that do not exist on this canvas (templates are project-wide).
+    patchSf({
+      summaryStrategy: t.summaryStrategy,
+      enabledStateIds: t.enabledStateIds.filter((x) => nodeIds.has(x)),
+      disabledStateIds: t.disabledStateIds.filter((x) => nodeIds.has(x)),
+      rewire: t.rewire.filter((r) => nodeIds.has(r.from) && nodeIds.has(r.to)),
+    });
+  };
+  const onSaveTemplate = () => {
+    const label = templateName.trim() || `${node.data.label} template`;
+    saveTemplate({
+      id: `tpl-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      label,
+      summaryStrategy: sf.summaryStrategy,
+      enabledStateIds: sf.enabledStateIds,
+      disabledStateIds: sf.disabledStateIds,
+      rewire: sf.rewire,
+    });
+    setTemplateName("");
+  };
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-foreground/10 bg-background/80 p-4">
@@ -1430,6 +1697,7 @@ export function SystemFunctionCard({
             Summary strategy (Q11)
           </Label>
           <Select
+            items={{ template: "template (free, lossy)", llm: "llm (costs, better)" }}
             value={sf.summaryStrategy}
             onValueChange={(v) => {
               if (typeof v === "string" && v) {
@@ -1447,6 +1715,49 @@ export function SystemFunctionCard({
               <SelectItem value="llm">llm (costs, better)</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="mt-3 space-y-2 rounded-lg border border-foreground/10 p-2.5">
+          <Label className="text-xs text-muted-foreground">Templates (§3.6)</Label>
+          {templates.length > 0 && (
+            <Select
+              value=""
+              onValueChange={(v) => {
+                if (typeof v === "string" && v) applyTemplate(v);
+              }}
+            >
+              <SelectTrigger
+                className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+                data-testid="sysfunc-template-apply"
+              >
+                <SelectValue placeholder="Apply template…" />
+              </SelectTrigger>
+              <SelectContent className="border-foreground/10 bg-popover text-foreground">
+                {templates.map((t) => (
+                  <SelectItem key={t.id} value={t.id} className="text-xs">
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <div className="flex gap-1.5">
+            <Input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="Template name"
+              className="h-8 border-foreground/10 bg-foreground/5 text-xs"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 shrink-0 gap-1 px-2 text-xs"
+              onClick={onSaveTemplate}
+              data-testid="sysfunc-template-save"
+            >
+              <BookmarkPlus className="h-3.5 w-3.5" /> Save
+            </Button>
+          </div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
           Dehydrate → Mask Swap → Hydrate runs at this boundary (§7.2). Router
@@ -1533,6 +1844,10 @@ export function SystemFunctionCard({
                   </SelectContent>
                 </Select>
                 <Select
+                  items={{
+                    ...(head.componentRef ? { [head.componentRef]: head.componentRef } : {}),
+                    ...nodeLabelItems(otherStates),
+                  }}
                   value={head.componentRef || undefined}
                   onValueChange={(v) => {
                     if (typeof v !== "string" || !v) return;
@@ -1655,6 +1970,7 @@ export function SystemFunctionCard({
                 className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5"
               >
                 <Select
+                  items={nodeLabelItems(otherStates)}
                   value={row.from || undefined}
                   onValueChange={(v) => {
                     if (typeof v !== "string" || !v) return;
@@ -1700,6 +2016,7 @@ export function SystemFunctionCard({
                   </SelectContent>
                 </Select>
                 <Select
+                  items={nodeLabelItems(otherStates)}
                   value={row.to || undefined}
                   onValueChange={(v) => {
                     if (typeof v !== "string" || !v) return;

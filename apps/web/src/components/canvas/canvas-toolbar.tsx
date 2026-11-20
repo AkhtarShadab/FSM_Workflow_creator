@@ -32,6 +32,7 @@ import {
 } from "@/lib/fsm-types";
 import { useCanvasStore } from "@/stores/canvas-store";
 import { DslPreviewDialog } from "./dsl-preview-dialog";
+import { TemplateDialog } from "./template-dialog";
 
 const ICONS: Record<FSMStateType, typeof Play> = {
   START: Play,
@@ -78,7 +79,7 @@ export function CanvasToolbar({
 
   return (
     <>
-      <div className="absolute top-4 left-4 z-10 hidden w-[200px] rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm md:block">
+      <div className="absolute top-4 left-4 z-10 hidden max-h-[calc(100%-10rem)] w-[200px] overflow-y-auto rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm md:block">
         <span className="mb-1 block px-1.5 pt-1 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
           Add state
         </span>
@@ -127,7 +128,7 @@ export function CanvasToolbar({
         </div>
       </div>
 
-      <div className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap justify-center gap-1 rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-1.5 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm md:hidden">
+      <div className="absolute bottom-2 left-1/2 z-10 flex w-[calc(100%-1rem)] max-w-md -translate-x-1/2 flex-wrap justify-center gap-1 rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-1.5 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm md:hidden">
         {PALETTE_GROUPS.flatMap((g) => g.types).map((type) => {
           const Icon = ICONS[type];
           return (
@@ -149,12 +150,16 @@ export function CanvasToolbar({
         })}
       </div>
 
-      <div className="absolute top-4 left-1/2 z-10 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm">
+      <div className="absolute top-2 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 sm:top-4 rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm">
         <Spline className="ml-1 hidden h-4 w-4 text-[var(--ink)] sm:block" />
-        <span className="hidden text-[10px] font-semibold tracking-widest text-muted-foreground uppercase sm:block">
+        <span className="hidden text-[10px] font-semibold tracking-widest text-muted-foreground uppercase lg:block">
           New wires
         </span>
         <Select
+          items={{
+            auto: "auto (from source)",
+            ...Object.fromEntries(SIGNAL_PRESETS.map(({ signal }) => [signal, signal])),
+          }}
           value={preferredSignal}
           onValueChange={(v) => v && setPreferredSignal(v)}
         >
@@ -172,7 +177,8 @@ export function CanvasToolbar({
             ))}
           </SelectContent>
         </Select>
-        <div className="mx-1 h-5 w-px bg-foreground/10" />
+        <div className="mx-1 hidden h-5 w-px bg-foreground/10 sm:block" />
+        <TemplateDialog projectId={projectId} />
         <DslPreviewDialog projectId={projectId} projectName={projectName} />
       </div>
     </>

@@ -29,6 +29,7 @@ import { CanvasToolbar } from "./canvas-toolbar";
 import { LintPanel } from "./lint-panel";
 import { PencilDefs } from "./pencil-defs";
 import { cn } from "@/lib/utils";
+import { canvasFitOptions } from "./fit-padding";
 
 const nodeTypes = { stateCircle: StateCircleNode };
 const edgeTypes = {
@@ -116,6 +117,11 @@ export function FsmCanvas({
         deleteKeyCode={["Backspace", "Delete"]}
         colorMode={dark ? "dark" : "light"}
         fitView
+        fitViewOptions={canvasFitOptions()}
+        // default minZoom (0.5) can never fit a realistic 10–20 state
+        // workflow on a laptop/phone screen, so boards always opened cropped
+        minZoom={0.1}
+        maxZoom={2}
         proOptions={{ hideAttribution: true }}
         className="bg-[var(--paper)]"
       >
@@ -125,11 +131,11 @@ export function FsmCanvas({
           size={1.6}
           color={dark ? "rgba(214,211,209,0.16)" : "rgba(87,83,78,0.22)"}
         />
-        <Controls className="!border-[var(--ink)]/20 !bg-[var(--paper)] [&_button]:!border-[var(--ink)]/15 [&_button]:!bg-[var(--paper)] [&_button]:!fill-[var(--ink)]" />
+        <Controls className="max-md:!bottom-[10rem] !border-[var(--ink)]/20 !bg-[var(--paper)] [&_button]:!border-[var(--ink)]/15 [&_button]:!bg-[var(--paper)] [&_button]:!fill-[var(--ink)]" />
         <MiniMap
           pannable
           zoomable
-          className="!border !border-[var(--ink)]/20 !bg-[var(--paper)]"
+          className="!border !border-[var(--ink)]/20 !bg-[var(--paper)] max-md:!hidden md:!bottom-16"
           nodeColor={dark ? "#57534e" : "#d6d3d1"}
           maskColor={dark ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.55)"}
         />

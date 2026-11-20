@@ -273,7 +273,12 @@ function MemoryView({
                 { value: fromId, set: setFromId, placeholder: "From…" },
                 { value: toId, set: setToId, placeholder: "To…" },
               ].map(({ value, set, placeholder }, i) => (
-                <Select key={i} value={value} onValueChange={(v) => v && set(v)}>
+                <Select
+                  key={i}
+                  items={Object.fromEntries(dbNodes.map((n) => [String(n.id), n.label]))}
+                  value={value}
+                  onValueChange={(v) => v && set(v)}
+                >
                   <SelectTrigger className="h-8 border-foreground/10 bg-foreground/5 text-xs">
                     <SelectValue placeholder={placeholder} />
                   </SelectTrigger>

@@ -64,14 +64,50 @@ function validateAgainstSchema(value: unknown, schema: unknown): boolean {
     }
     if (t === "array") return Array.isArray(value);
     if (t === "string") return typeof value === "string";
-    if (t === "number") return typeof value === "number";
+    if (t === "number") return typeof value === "number" && Number.isFinite(value);
+    if (t === "integer") return Number.isInteger(value);
+    if (t === "null") return value === null;
     if (t === "boolean") return typeof value === "boolean";
   }
   return true;
 }
 
+function abortError(): Error {
+  return new DOMException("Aborted", "AbortError");
+}
+
+/**
+ * Settle with `p`, or reject as soon as `signal` aborts — whichever comes
+ * first. Guarantees guardrail timeouts / parent aborts are enforced even when
+ * an executor ignores its AbortSignal.
+ */
+export function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    p.catch(() => {});
+    return Promise.reject(abortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      }
+    );
+  });
+}
+
 /**
  * Enter → execute (with retries/timeout) → verify output → emit.
+ *
+ * - `guardrails.timeoutMs` is enforced even if the executor never settles.
+ * - A parent abort (opts.abortSignal) always resolves with reason "aborted"
+ *   (it never throws and never burns retries).
  */
 export async function runState(
   spec: RunStateSpec,
@@ -93,15 +129,26 @@ export async function runState(
   const maxAttempts = Math.max(1, spec.guardrails.retryMax + 1);
   let lastError = "";
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (opts.abortSignal?.aborted) {
-      return {
-        ok: false,
-        emission: spec.onErrorSignal,
-        attempts: attempt - 1,
-        reason: "aborted",
-      };
+  const aborted = (attempts: number): RunStateResult => ({
+    ok: false,
+    emission: spec.onErrorSignal,
+    attempts,
+    reason: "aborted",
+    ...(lastError ? { error: lastError } : {}),
+  });
+
+  /** Sleep between attempts; false when the parent aborted meanwhile. */
+  const backoff = async (): Promise<boolean> => {
+    try {
+      await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
+      return !opts.abortSignal?.aborted;
+    } catch {
+      return false;
     }
+  };
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (opts.abortSignal?.aborted) return aborted(attempt - 1);
 
     const controller = new AbortController();
     const onAbort = () => controller.abort();
@@ -113,45 +160,27 @@ export async function runState(
       controller.abort();
     }, Math.max(1, spec.guardrails.timeoutMs));
 
+    const done = () => {
+      clearTimeout(timer);
+      opts.abortSignal?.removeEventListener("abort", onAbort);
+    };
+
+    let emission: Emission;
     try {
-      const emission = await spec.execute({
-        payload: inputPayload,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timer);
-      opts.abortSignal?.removeEventListener("abort", onAbort);
-
-      // Optional output schema on structured emissions with payload
-      const outPayload =
-        typeof emission === "object" && emission && "payload" in emission
-          ? emission.payload
-          : inputPayload;
-
-      if (!validateAgainstSchema(outPayload, spec.outputSchema)) {
-        lastError = "output schema validation failed";
-        if (attempt < maxAttempts) {
-          await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
-          continue;
-        }
-        return {
-          ok: false,
-          emission: spec.onErrorSignal,
-          attempts: attempt,
-          reason: "output_schema",
-          error: lastError,
-        };
-      }
-
-      return { ok: true, emission, attempts: attempt };
+      emission = await raceAbort(
+        Promise.resolve().then(() =>
+          spec.execute({ payload: inputPayload, signal: controller.signal })
+        ),
+        controller.signal
+      );
+      done();
     } catch (err) {
-      clearTimeout(timer);
-      opts.abortSignal?.removeEventListener("abort", onAbort);
+      done();
       lastError = err instanceof Error ? err.message : String(err);
 
       if (timedOut) {
         if (attempt < maxAttempts) {
-          await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
+          if (!(await backoff())) return aborted(attempt);
           continue;
         }
         return {
@@ -163,8 +192,10 @@ export async function runState(
         };
       }
 
+      if (opts.abortSignal?.aborted) return aborted(attempt);
+
       if (attempt < maxAttempts) {
-        await clock.sleep(spec.guardrails.retryBackoffMs, opts.abortSignal);
+        if (!(await backoff())) return aborted(attempt);
         continue;
       }
 
@@ -176,6 +207,29 @@ export async function runState(
         error: lastError,
       };
     }
+
+    // Optional output schema on structured emissions with payload
+    const outPayload =
+      typeof emission === "object" && emission && "payload" in emission
+        ? emission.payload
+        : inputPayload;
+
+    if (!validateAgainstSchema(outPayload, spec.outputSchema)) {
+      lastError = "output schema validation failed";
+      if (attempt < maxAttempts) {
+        if (!(await backoff())) return aborted(attempt);
+        continue;
+      }
+      return {
+        ok: false,
+        emission: spec.onErrorSignal,
+        attempts: attempt,
+        reason: "output_schema",
+        error: lastError,
+      };
+    }
+
+    return { ok: true, emission, attempts: attempt };
   }
 
   return {

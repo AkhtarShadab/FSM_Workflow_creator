@@ -1,22 +1,32 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { useReactFlow } from "@xyflow/react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { lintCanvas } from "@/lib/canvas-to-dsl";
-import { useCanvasStore } from "@/stores/canvas-store";
+import { useCanvasStore, useLogicalNodes } from "@/stores/canvas-store";
 import { useCredentialStore } from "@/stores/credential-store";
 import { useRegistryStore } from "@/stores/registry-store";
 import { cn } from "@/lib/utils";
 
 /** Compact severity-aware lint strip for the canvas (FeatureShipping 001 C2+) */
 export function LintPanel({ projectId }: { projectId: string }) {
-  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes);
+  const nodes = useLogicalNodes(projectId);
   const edges = useCanvasStore((s) => s.canvases[projectId]?.edges);
   const credentials = useCredentialStore((s) => s.credentials);
   const registry = useRegistryStore((s) => s.registry);
   const [open, setOpen] = useState(false);
+  const selectNode = useCanvasStore((s) => s.selectNode);
+  const { fitView } = useReactFlow();
+
+  /** Jump to the state an issue is about (select + centre it). */
+  const focusNode = (nodeId?: string) => {
+    if (!nodeId || !(nodes ?? []).some((n) => n.id === nodeId)) return;
+    selectNode(nodeId);
+    void fitView({ nodes: [{ id: nodeId }], duration: 300, maxZoom: 1.2 });
+  };
 
   const issues = useMemo(
     () =>
@@ -34,14 +44,26 @@ export function LintPanel({ projectId }: { projectId: string }) {
     [nodes, edges, credentials, registry]
   );
 
-  if (issues.length === 0) return null;
+  if (issues.length === 0) {
+    // Say so explicitly — a clean board is worth showing, not hiding.
+    return (
+      <div
+        className="absolute bottom-[7.25rem] left-2 z-10 md:right-36 md:bottom-4 md:left-auto"
+        data-testid="canvas-lint-clean"
+      >
+        <span className="flex items-center gap-1.5 rounded-xl border-2 border-emerald-500/30 bg-[var(--paper)]/95 px-3 py-2 text-xs font-semibold text-emerald-700 shadow-[3px_4px_0_rgba(0,0,0,0.06)] dark:text-emerald-300">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Lint clean
+        </span>
+      </div>
+    );
+  }
 
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");
 
   return (
     <div
-      className="absolute right-4 bottom-4 z-10 w-[min(340px,calc(100vw-2rem))]"
+      className="absolute bottom-[7.25rem] left-2 z-10 w-[min(340px,calc(100%-8.5rem))] md:right-36 md:bottom-4 md:left-auto"
       data-testid="canvas-lint-panel"
     >
       <div className="overflow-hidden rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/95 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm">
@@ -85,8 +107,13 @@ export function LintPanel({ projectId }: { projectId: string }) {
             {issues.map((i) => (
               <li
                 key={`${i.code}-${i.nodeId ?? ""}-${i.message}`}
-                className="flex items-start gap-2"
+                className={cn(
+                  "flex items-start gap-2 rounded px-1 py-0.5",
+                  i.nodeId && "cursor-pointer hover:bg-foreground/5"
+                )}
                 data-testid={`lint-issue-${i.code}`}
+                onClick={() => focusNode(i.nodeId)}
+                title={i.nodeId ? "Show this state" : undefined}
               >
                 <Badge
                   variant={i.severity === "error" ? "destructive" : "outline"}
@@ -100,7 +127,9 @@ export function LintPanel({ projectId }: { projectId: string }) {
                 </Badge>
                 <span
                   className={
-                    i.severity === "error" ? "text-red-300" : "text-amber-200/90"
+                    i.severity === "error"
+                      ? "text-red-600 dark:text-red-300"
+                      : "text-amber-700 dark:text-amber-200/90"
                   }
                 >
                   {i.message}

@@ -3,6 +3,7 @@ import { parseSignal } from "./signals";
 import { resolveTransition } from "./resolver";
 import { runState, type Clock } from "./run-state";
 import { runSpawn, withInFlightProbe } from "./spawn-pool";
+import { runFsm } from "./runner";
 
 describe("parseSignal", () => {
   it("parses string grammar with payload", () => {
@@ -162,7 +163,8 @@ describe("runState", () => {
         onErrorSignal: "::SCRIPT.ERROR",
         execute: async () => {
           attempts += 1;
-          return { signal: "::SCRIPT.NEXT", payload: "bad" };
+          // Deliberately malformed payload to exercise output-schema checks.
+          return { signal: "::SCRIPT.NEXT", payload: "bad" as unknown as Record<string, unknown> };
         },
       },
       {},
@@ -311,5 +313,148 @@ describe("runSpawn", () => {
     setTimeout(() => parent.abort(), 20);
     const envelopes = await p;
     expect(envelopes.some((e) => e.status === "cancelled")).toBe(true);
+  });
+});
+
+describe("regressions (code-review fixes)", () => {
+  const realClock: Clock = {
+    now: () => Date.now(),
+    sleep: (ms, signal) =>
+      new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(new Error("aborted"));
+        const t = setTimeout(resolve, ms);
+        signal?.addEventListener("abort", () => {
+          clearTimeout(t);
+          reject(new Error("aborted"));
+        });
+      }),
+  };
+
+  it("runState enforces timeoutMs even when the executor ignores its signal", async () => {
+    const r = await runState(
+      {
+        id: "S1",
+        guardrails: { timeoutMs: 15, retryMax: 0, retryBackoffMs: 0 },
+        onErrorSignal: "::SCRIPT.ERROR",
+        execute: () => new Promise<never>(() => {}), // never settles
+      },
+      {},
+      { clock: realClock }
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("timeout");
+  });
+
+  it("runState returns reason=aborted (does not throw) on parent abort mid-execute", async () => {
+    const parent = new AbortController();
+    setTimeout(() => parent.abort(), 10);
+    const r = await runState(
+      {
+        id: "S1",
+        guardrails: { timeoutMs: 1000, retryMax: 3, retryBackoffMs: 50 },
+        onErrorSignal: "::SCRIPT.ERROR",
+        execute: ({ signal }) =>
+          new Promise((_, reject) =>
+            signal.addEventListener("abort", () => reject(new Error("stop")))
+          ),
+      },
+      {},
+      { clock: realClock, abortSignal: parent.signal }
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("aborted");
+    expect(r.attempts).toBe(1);
+  });
+
+  it("runSpawn labels pool-cancelled children 'cancelled', not 'timeout'", async () => {
+    const envelopes = await runSpawn(
+      {
+        mode: "homogeneous",
+        count: 3,
+        maxConcurrency: 3,
+        strategy: "firstSuccess",
+        cancelOnParentHalt: true,
+        profiles: [{ id: "default", toolPack: [], skillPack: [], timeoutMs: 5000 }],
+      },
+      async ({ index, signal }) => {
+        if (index === 0) return { win: true };
+        return new Promise((_, reject) =>
+          signal.addEventListener("abort", () => reject(new Error("cancelled")))
+        );
+      }
+    );
+    expect(envelopes.map((e) => e.status)).toEqual(["ok", "cancelled", "cancelled"]);
+  });
+
+  it("runSpawn settles a child that ignores its signal (real timeout)", async () => {
+    const envelopes = await runSpawn(
+      {
+        mode: "homogeneous",
+        count: 1,
+        maxConcurrency: 1,
+        strategy: "waitAll",
+        cancelOnParentHalt: true,
+        profiles: [{ id: "default", toolPack: [], skillPack: [], timeoutMs: 15 }],
+      },
+      () => new Promise(() => {}) // hangs forever, ignores abort
+    );
+    expect(envelopes[0].status).toBe("timeout");
+  });
+
+  it("runSpawn with an already-aborted parent cancels everything", async () => {
+    const parent = new AbortController();
+    parent.abort();
+    let ran = 0;
+    const envelopes = await runSpawn(
+      {
+        mode: "homogeneous",
+        count: 2,
+        maxConcurrency: 2,
+        strategy: "waitAll",
+        cancelOnParentHalt: true,
+        profiles: [{ id: "default", toolPack: [], skillPack: [] }],
+      },
+      async () => {
+        ran += 1;
+        return {};
+      },
+      { parentSignal: parent.signal }
+    );
+    expect(ran).toBe(0);
+    expect(envelopes.every((e) => e.status === "cancelled")).toBe(true);
+  });
+
+  it("resolveTransition prefers flow edges over router wiring with the same signal", () => {
+    const r = resolveTransition({
+      fromStateId: "SF",
+      emission: "::SYSTEM.HYDRATE",
+      edges: [
+        { from: "SF", on: "::SYSTEM.HYDRATE", to: "HEAD_TARGET", kind: "router" },
+        { from: "SF", on: "::SYSTEM.HYDRATE", to: "NEXT", kind: "transition" },
+      ],
+    });
+    expect(r.ok && r.to).toBe("NEXT");
+  });
+
+  it("runFsm stops with 'Run aborted' when the abort signal fires", async () => {
+    const ctrl = new AbortController();
+    const r = await runFsm({
+      states: [
+        { id: "S0", type: "START" },
+        { id: "A", type: "SCRIPT" },
+        { id: "E", type: "END" },
+      ],
+      edges: [
+        { from: "S0", on: "::SCRIPT.NEXT", to: "A" },
+        { from: "A", on: "::SCRIPT.NEXT", to: "E" },
+      ],
+      abortSignal: ctrl.signal,
+      executeState: async ({ state }) => {
+        if (state.id === "S0") ctrl.abort();
+        return "::SCRIPT.NEXT";
+      },
+    });
+    expect(r.status).toBe("failed");
+    expect(r.error).toBe("Run aborted");
   });
 });

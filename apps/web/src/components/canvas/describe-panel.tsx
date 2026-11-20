@@ -7,7 +7,7 @@ import { RainbowButton } from "@/components/ui/rainbow-button";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Textarea } from "@/components/ui/textarea";
 import { updateProjectDescription } from "@/app/actions";
-import { useCanvasStore } from "@/stores/canvas-store";
+import { useCanvasStore, useLogicalNodes } from "@/stores/canvas-store";
 import type { Project } from "@/db/schema";
 
 /**
@@ -22,7 +22,7 @@ export function DescribePanel({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const nodes = useCanvasStore((s) => s.canvases[String(project.id)]?.nodes);
+  const nodes = useLogicalNodes(String(project.id));
   const edges = useCanvasStore((s) => s.canvases[String(project.id)]?.edges);
   const [description, setDescription] = useState(project.description ?? "");
   const [saved, setSaved] = useState(false);
@@ -39,12 +39,13 @@ export function DescribePanel({
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/60 p-4 backdrop-blur-sm">
-      <div className="relative w-full max-w-lg rotate-[-0.4deg] rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)] p-6 shadow-[6px_8px_0_rgba(0,0,0,0.10)]">
+      <div className="relative max-h-full w-full max-w-lg rotate-[-0.4deg] overflow-y-auto rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)] p-5 shadow-[6px_8px_0_rgba(0,0,0,0.10)] sm:p-6">
         {/* washi tape */}
         <div className="absolute -top-3 left-1/2 h-6 w-24 -translate-x-1/2 -rotate-[2deg] rounded-[2px] bg-[#8fb4ec]/50 shadow-sm" />
 
         <button
           onClick={onClose}
+          aria-label="Close"
           className="absolute top-3 right-3 rounded-md p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
         >
           <X className="h-4 w-4" />
@@ -102,7 +103,7 @@ export function DescribePanel({
           ))}
         </div>
 
-        <div className="mt-6 flex items-center gap-3">
+        <div className="mt-6 flex flex-wrap items-center gap-3">
           <ShimmerButton
             onClick={() => router.push(`/project/${project.id}/runs`)}
             background="rgba(209,250,229,0.9)"
@@ -119,7 +120,8 @@ export function DescribePanel({
         </div>
 
         <p className="mt-3 text-[10px] text-muted-foreground">
-          Start run opens the live monitor — engine execution lands in Phase 3.
+          Start run opens the live monitor and executes this canvas with
+          @fsm/engine (AI/HTTP executors are stubbed until Feature 003).
         </p>
       </div>
     </div>

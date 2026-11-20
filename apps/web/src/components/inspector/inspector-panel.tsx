@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { STATE_COLORS, type StateNodeData } from "@/lib/fsm-types";
-import { useCanvasStore } from "@/stores/canvas-store";
+import { useCanvasStore, useLogicalNodes } from "@/stores/canvas-store";
 import {
   AggregateCard,
   ConditionsCard,
@@ -25,13 +25,14 @@ import {
   VerifiabilityCard,
 } from "./inspector-cards";
 
-const EMPTY_NODES: import("@/lib/fsm-types").StateNode[] = [];
 const EMPTY_EDGES: import("@/lib/fsm-types").TransitionEdge[] = [];
 
 /** Sliding inspector drawer (Bento Grid per §10.3) */
 export function InspectorPanel({ projectId }: { projectId: string }) {
   const selectedNodeId = useCanvasStore((s) => s.selectedNodeId);
-  const nodes = useCanvasStore((s) => s.canvases[projectId]?.nodes) ?? EMPTY_NODES;
+  // Ignore drag/selection churn so the (heavy) inspector does not re-render
+  // on every pointer move while a sticky is dragged.
+  const nodes = useLogicalNodes(projectId);
   const edges = useCanvasStore((s) => s.canvases[projectId]?.edges) ?? EMPTY_EDGES;
   const selectNode = useCanvasStore((s) => s.selectNode);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
@@ -47,8 +48,10 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
   return (
     <aside
       className={cn(
-        "absolute top-4 right-4 bottom-4 z-20 w-[min(380px,92vw)] transition-transform duration-300 ease-in-out",
-        open ? "translate-x-0" : "translate-x-[110%]"
+        "absolute top-2 right-2 bottom-2 z-[25] w-[min(380px,calc(100%-1rem))] transition-[transform,visibility] duration-300 ease-in-out sm:top-4 sm:right-4 sm:bottom-4",
+        open
+          ? "translate-x-0"
+          : "pointer-events-none invisible translate-x-[110%]"
       )}
     >
       <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-foreground/10 bg-background/90 backdrop-blur-md">
@@ -109,7 +112,12 @@ export function InspectorPanel({ projectId }: { projectId: string }) {
                   <GenerativeConfigCard node={node} patch={patch} />
                 )}
                 {node.data.stateType === "SPAWN" && (
-                  <SpawnCard node={node} patch={patch} />
+                  <SpawnCard
+                    node={node}
+                    patch={patch}
+                    allNodes={nodes}
+                    projectId={projectId}
+                  />
                 )}
                 {node.data.stateType === "AGGREGATE" && (
                   <AggregateCard

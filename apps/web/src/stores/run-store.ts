@@ -19,6 +19,8 @@ interface RunStore {
   start: () => void;
   stop: () => void;
   pushEvent: (event: Omit<RunEvent, "id" | "ts">) => void;
+  /** Replace the log with a run's events in chronological order. */
+  replaceEvents: (events: Array<Omit<RunEvent, "id" | "ts">>) => void;
   reset: () => void;
 }
 
@@ -31,13 +33,23 @@ export const useRunStore = create<RunStore>()((set) => ({
   start: () => set({ live: true }),
   stop: () => set({ live: false }),
 
+  // Appends (chronological, oldest first) so a replayed run reads top-down.
   pushEvent: (event) =>
     set((state) => ({
       events: [
-        { ...event, id: `ev_${++n}`, ts: Date.now() },
         ...state.events,
-      ].slice(0, 50),
+        { ...event, id: `ev_${++n}`, ts: Date.now() },
+      ].slice(-200),
     })),
+
+  replaceEvents: (list) =>
+    set({
+      events: list.slice(0, 200).map((event) => ({
+        ...event,
+        id: `ev_${++n}`,
+        ts: Date.now(),
+      })),
+    }),
 
   reset: () => set({ events: [], live: false }),
 }));

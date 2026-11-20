@@ -4,7 +4,7 @@ import { memo } from "react";
 import {
   Handle,
   Position,
-  useNodes,
+  useStore,
   type NodeProps,
 } from "@xyflow/react";
 import {
@@ -226,7 +226,13 @@ function AggregateChips({
   data: StateNode["data"];
   textClass: string;
 }) {
-  const nodes = useNodes() as StateNode[];
+  // Only re-render when node data changes — `useNodes()` re-rendered every
+  // AGGREGATE sticky on every drag tick of any node.
+  const nodes = useStore(
+    (s) => s.nodes as StateNode[],
+    (a, b) =>
+      a.length === b.length && a.every((n, i) => n.id === b[i].id && n.data === b[i].data)
+  );
   const aggregate = normalizeAggregate(data.aggregate);
   const spawn =
     nodes.find((n) => n.id === aggregate.fromSpawnId) ??
