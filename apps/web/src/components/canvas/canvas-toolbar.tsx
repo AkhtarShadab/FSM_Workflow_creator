@@ -32,6 +32,7 @@ import {
 } from "@/lib/fsm-types";
 import { useCanvasStore } from "@/stores/canvas-store";
 import { DslPreviewDialog } from "./dsl-preview-dialog";
+import { TemplateDialog } from "./template-dialog";
 
 const ICONS: Record<FSMStateType, typeof Play> = {
   START: Play,
@@ -151,7 +152,7 @@ export function CanvasToolbar({
 
       <div className="absolute top-2 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 sm:top-4 rounded-xl border-2 border-[var(--ink)]/15 bg-[var(--paper)]/90 p-2 shadow-[3px_4px_0_rgba(0,0,0,0.06)] backdrop-blur-sm">
         <Spline className="ml-1 hidden h-4 w-4 text-[var(--ink)] sm:block" />
-        <span className="hidden text-[10px] font-semibold tracking-widest text-muted-foreground uppercase sm:block">
+        <span className="hidden text-[10px] font-semibold tracking-widest text-muted-foreground uppercase lg:block">
           New wires
         </span>
         <Select
@@ -177,6 +178,7 @@ export function CanvasToolbar({
           </SelectContent>
         </Select>
         <div className="mx-1 hidden h-5 w-px bg-foreground/10 sm:block" />
+        <TemplateDialog projectId={projectId} />
         <DslPreviewDialog projectId={projectId} projectName={projectName} />
       </div>
     </>

@@ -3,6 +3,7 @@ import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { fsmDefinitions, projects, runEvents, runs } from "@/db/schema";
 import { startProjectRun } from "@/lib/run-engine";
+import { parseOverrides } from "@/lib/stub-executor";
 import type { CanvasData } from "@/lib/fsm-types";
 
 export async function POST(
@@ -26,7 +27,7 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  let body: { canvas?: CanvasData };
+  let body: { canvas?: CanvasData; overrides?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -40,8 +41,16 @@ export async function POST(
     );
   }
 
+  const overrides = parseOverrides(body.overrides);
+  if (!overrides) {
+    return NextResponse.json(
+      { error: "overrides must map stateId → array of ::SIGNAL strings" },
+      { status: 400 }
+    );
+  }
+
   try {
-    const result = await startProjectRun(projectId, body.canvas);
+    const result = await startProjectRun(projectId, body.canvas, { overrides });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

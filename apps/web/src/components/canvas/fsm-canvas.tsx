@@ -29,6 +29,7 @@ import { CanvasToolbar } from "./canvas-toolbar";
 import { LintPanel } from "./lint-panel";
 import { PencilDefs } from "./pencil-defs";
 import { cn } from "@/lib/utils";
+import { canvasFitOptions } from "./fit-padding";
 
 const nodeTypes = { stateCircle: StateCircleNode };
 const edgeTypes = {
@@ -116,6 +117,11 @@ export function FsmCanvas({
         deleteKeyCode={["Backspace", "Delete"]}
         colorMode={dark ? "dark" : "light"}
         fitView
+        fitViewOptions={canvasFitOptions()}
+        // default minZoom (0.5) can never fit a realistic 10–20 state
+        // workflow on a laptop/phone screen, so boards always opened cropped
+        minZoom={0.1}
+        maxZoom={2}
         proOptions={{ hideAttribution: true }}
         className="bg-[var(--paper)]"
       >

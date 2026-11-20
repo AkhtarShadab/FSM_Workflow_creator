@@ -64,9 +64,9 @@ export function DslPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger className="inline-flex items-center justify-center gap-2 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-white">
+      <DialogTrigger className="inline-flex items-center justify-center gap-2 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-white" title="View DSL" aria-label="View DSL">
         <FileJson className="h-4 w-4" />
-        View DSL
+        <span className="hidden xl:inline">View DSL</span>
       </DialogTrigger>
       <DialogContent className="max-w-2xl border-foreground/10 bg-background text-foreground">
         <DialogHeader>

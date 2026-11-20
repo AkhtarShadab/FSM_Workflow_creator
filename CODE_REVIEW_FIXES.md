@@ -100,6 +100,26 @@ A second review in the running app at 390px (phone), 768px and 1280px widths, co
 
 **Tests:** `apps/web/src/lib/ui-pass-2.test.ts` covers the drag-churn filter and template operations. Totals are now 80 unit tests, both typechecks pass, `next build` passes, and ESLint problems are down from 17 to 13 (none new). All of the above was checked in the running app.
 
+### Pass 3: demo workflow, and fixes it surfaced
+
+Building and running a realistic 14-state workflow (water inspection → crew dispatch, [docs/demo-water-inspection.md](docs/demo-water-inspection.md)) exposed these:
+
+| # | Problem | Fix |
+|---|---------|-----|
+| D16 | **Dry runs could only take the happy path.** The stub executor always emitted the success signal, so error routes, rejections and self-loops could never be exercised. | `POST /runs` accepts `overrides` (stateId → signals per visit). The Runs page has a **Scenario** picker (template presets, plus "Custom branches…" for any canvas) and checks the outcome against the expected result. |
+| D17 | **Run events hid what happened.** They didn't show which signal a state emitted, and the SPAWN event didn't summarise child outcomes. | Events read `ok attempts=1 → ::HTTP.NEXT` and `spawned 3 children (3 ok)`. |
+| D18 | **Escalations looked like successes.** An END reached through an error, reject or timeout edge was reported like a happy-path finish. | Shown as "Routed to … via ::HTTP.ERROR" in amber. Self-loop retries show as ×n on the path. |
+| D19 | **Realistic boards always opened cropped.** React Flow's default `minZoom` of 0.5 can't fit a 10–20 state workflow on a laptop, and the fit ignored the floating palette. | `minZoom` 0.1, with fit padding that clears the palette and toolbar. |
+| D20 | **No starter content.** There was no way to start from a known-good workflow. | Template library: a **Templates** dialog on the canvas and **Start from** when creating a project. Templates register the custom signals and skills they need, so they lint clean. |
+| D21 | **A clean board showed nothing.** | A "Lint clean" badge. The toolbar is also compact enough to fit on one row at laptop widths. |
+
+Tests: `apps/web/src/lib/templates/water-inspection.test.ts` checks:
+- the template lints with zero issues,
+- the DSL shape,
+- template detection,
+- the override parser,
+- every scenario's end state through the real engine.
+
 ---
 
 ## Recommended follow-ups (not changed here)

@@ -25,6 +25,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createProject, deleteProject } from "@/app/actions";
+import { WORKFLOW_TEMPLATES, getTemplate } from "@/lib/templates";
+import { applyTemplate } from "@/lib/templates/apply";
 import { useCanvasStore } from "@/stores/canvas-store";
 import type { Project } from "@/db/schema";
 
@@ -32,6 +34,7 @@ import type { Project } from "@/db/schema";
 export function ProjectList({ projects }: { projects: Project[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [templateId, setTemplateId] = useState("");
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -56,10 +59,14 @@ export function ProjectList({ projects }: { projects: Project[] }) {
 
   const handleCreate = () => {
     startTransition(async () => {
-      const id = await createProject(name);
+      const template = templateId ? getTemplate(templateId) : undefined;
+      const id = await createProject(name || template?.name || "");
+      if (template) applyTemplate(String(id), template);
       setOpen(false);
       setName("");
-      router.push(`/project/${id}`);
+      setTemplateId("");
+      // a templated board is ready to explore — go straight to the canvas
+      router.push(template ? `/project/${id}/canvas` : `/project/${id}`);
     });
   };
 
@@ -103,6 +110,23 @@ export function ProjectList({ projects }: { projects: Project[] }) {
                 className="border-foreground/10 bg-foreground/5"
                 autoFocus
               />
+              <Label htmlFor="project-template" className="pt-2">
+                Start from
+              </Label>
+              <select
+                id="project-template"
+                value={templateId}
+                onChange={(e) => setTemplateId(e.target.value)}
+                className="h-9 w-full rounded-md border border-foreground/10 bg-foreground/5 px-2 text-sm"
+                data-testid="project-template"
+              >
+                <option value="">Blank canvas</option>
+                {WORKFLOW_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <DialogFooter>
               <Button

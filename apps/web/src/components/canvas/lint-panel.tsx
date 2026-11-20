@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
-import { AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { lintCanvas } from "@/lib/canvas-to-dsl";
@@ -44,7 +44,19 @@ export function LintPanel({ projectId }: { projectId: string }) {
     [nodes, edges, credentials, registry]
   );
 
-  if (issues.length === 0) return null;
+  if (issues.length === 0) {
+    // Say so explicitly — a clean board is worth showing, not hiding.
+    return (
+      <div
+        className="absolute bottom-[7.25rem] left-2 z-10 md:right-36 md:bottom-4 md:left-auto"
+        data-testid="canvas-lint-clean"
+      >
+        <span className="flex items-center gap-1.5 rounded-xl border-2 border-emerald-500/30 bg-[var(--paper)]/95 px-3 py-2 text-xs font-semibold text-emerald-700 shadow-[3px_4px_0_rgba(0,0,0,0.06)] dark:text-emerald-300">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Lint clean
+        </span>
+      </div>
+    );
+  }
 
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");

@@ -1,46 +1,21 @@
 import { db } from "@/db";
 import { fsmDefinitions, runEvents, runs } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { runFsm, type EngineState } from "@fsm/engine";
+import { runFsm } from "@fsm/engine";
 import type { CanvasData } from "@/lib/fsm-types";
 import { canvasToDsl } from "@/lib/canvas-to-dsl";
 import { canvasToEngine } from "@/lib/canvas-to-engine";
-
-async function stubExecute(args: {
-  state: EngineState;
-  payload: unknown;
-  signal: AbortSignal;
-}) {
-  const { state } = args;
-  switch (state.type) {
-    case "START":
-      return "::SCRIPT.NEXT";
-    case "SCRIPT":
-      return "::SCRIPT.NEXT";
-    case "HTTP":
-      return "::HTTP.NEXT";
-    case "VALIDATE":
-      return "::VALIDATE.NEXT";
-    case "AI":
-      return "::AI.NEXT";
-    case "EXTERNAL_AI":
-      return "::EXTERNAL_AI.NEXT";
-    case "HUMAN":
-      // Stub: auto-approve in platform runs until live human bridge lands
-      return "::HUMAN.APPROVE";
-    case "AGGREGATE":
-      return "::SCRIPT.NEXT";
-    case "SYSTEM_FUNCTION":
-      return "::SYSTEM.HYDRATE";
-    default:
-      return "::SCRIPT.NEXT";
-  }
-}
+import { createStubExecutor } from "@/lib/stub-executor";
+import type { SignalOverrides } from "@/lib/templates/types";
 
 /**
  * Persist FSM snapshot, execute with @fsm/engine, write run_events.
  */
-export async function startProjectRun(projectId: number, canvas: CanvasData) {
+export async function startProjectRun(
+  projectId: number,
+  canvas: CanvasData,
+  opts: { overrides?: SignalOverrides } = {}
+) {
   // Persist the versioned FSM DSL (§10.2), not the raw React Flow canvas —
   // consumers of fsm_definitions.json expect the exported schema.
   const dsl = JSON.stringify(canvasToDsl(canvas));
@@ -60,7 +35,7 @@ export async function startProjectRun(projectId: number, canvas: CanvasData) {
     result = await runFsm({
       states,
       edges,
-      executeState: stubExecute,
+      executeState: createStubExecutor(opts.overrides),
       executeChild: async () => ({ stub: true }),
     });
 
@@ -105,6 +80,7 @@ export async function startProjectRun(projectId: number, canvas: CanvasData) {
   return {
     runId: run.id,
     status: result.status,
+    finalStateId: result.finalStateId,
     events: result.events,
     error: result.error,
     aggregate: result.aggregate,

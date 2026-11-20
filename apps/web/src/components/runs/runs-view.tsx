@@ -12,6 +12,8 @@ import { ProjectNav } from "@/components/nav/project-nav";
 import { cn } from "@/lib/utils";
 import { STATE_COLORS, type FSMStateType } from "@/lib/fsm-types";
 import { useCanvasStore } from "@/stores/canvas-store";
+import { detectTemplate, type SignalOverrides } from "@/lib/templates";
+import { normalizeEdgeData } from "@/lib/fsm-types";
 import { useRunStore } from "@/stores/run-store";
 
 interface RunEventDto {
@@ -59,14 +61,33 @@ function duration(run: RunDto): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-/** Ordered, de-duplicated list of states a run entered (the run "path"). */
-function visitedPath(events: RunEventDto[]): string[] {
-  const path: string[] = [];
+interface PathStep {
+  stateId: string;
+  /** consecutive visits (self-loop retries) */
+  times: number;
+}
+
+/** States a run entered, in order; self-loop repeats collapse to "×n". */
+function visitedPath(events: RunEventDto[]): PathStep[] {
+  const path: PathStep[] = [];
   for (const e of events) {
     if (!e.message.startsWith("enter ")) continue;
-    if (path[path.length - 1] !== e.stateId) path.push(e.stateId);
+    const last = path[path.length - 1];
+    if (last?.stateId === e.stateId) last.times += 1;
+    else path.push({ stateId: e.stateId, times: 1 });
   }
   return path;
+}
+
+const ERROR_ROUTE = /\.ERROR|VALIDATION_ERROR|HALT|REJECT|TIMEOUT/;
+
+/** Last signal a state emitted (from "ok attempts=1 → ::X.Y" events). */
+function lastEmittedSignal(events: RunEventDto[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const m = events[i].message.match(/→ (::[A-Z0-9_]+\.[A-Z0-9_]+)/);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 export function RunsView({
@@ -84,8 +105,48 @@ export function RunsView({
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
-  const [path, setPath] = useState<string[]>([]);
+  const [path, setPath] = useState<PathStep[]>([]);
+  const [lastSignal, setLastSignal] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [scenarioId, setScenarioId] = useState("default");
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const [lastFinal, setLastFinal] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastScenarioId, setLastScenarioId] = useState<string | null>(null);
+
+  const template = useMemo(() => detectTemplate(canvas), [canvas]);
+  const scenarios = template?.scenarios ?? [];
+  const activeScenario = scenarios.find((x) => x.id === scenarioId);
+
+  /** States with ≥2 outgoing signals — the branches a dry run can steer. */
+  const branchStates = useMemo(() => {
+    const nodes = canvas?.nodes ?? [];
+    const edges = canvas?.edges ?? [];
+    return nodes
+      .map((n) => ({
+        node: n,
+        signals: [
+          ...new Set(
+            edges
+              .filter((e) => e.source === n.id)
+              .map((e) => normalizeEdgeData(e.data, e.source, e.target))
+              .filter((d) => d.kind !== "router")
+              .map((d) => d.signal)
+          ),
+        ],
+      }))
+      .filter((b) => b.signals.length >= 2);
+  }, [canvas]);
+
+  const currentOverrides = (): SignalOverrides => {
+    if (activeScenario) return activeScenario.overrides;
+    if (scenarioId !== "custom") return {};
+    return Object.fromEntries(
+      Object.entries(custom)
+        .filter(([, sig]) => sig)
+        .map(([id, sig]) => [id, [sig]])
+    );
+  };
 
   const totalIn = events.reduce((sum, e) => sum + (e.tokensIn ?? 0), 0);
   const totalOut = events.reduce((sum, e) => sum + (e.tokensOut ?? 0), 0);
@@ -105,6 +166,7 @@ export function RunsView({
         }))
       );
       setPath(visitedPath(list));
+      setLastSignal(lastEmittedSignal(list));
     },
     [replaceEvents]
   );
@@ -132,8 +194,12 @@ export function RunsView({
   }, [loadHistory]);
 
   const runEngine = async () => {
+    setLastFinal(null);
+    setLastError(null);
+    setLastScenarioId(null);
     reset();
     setPath([]);
+    setLastSignal(null);
     setSelectedRunId(null);
     setBusy(true);
     setLastStatus(null);
@@ -146,12 +212,15 @@ export function RunsView({
       const res = await fetch(`/api/projects/${projectId}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canvas: { nodes, edges } }),
+        body: JSON.stringify({ canvas: { nodes, edges }, overrides: currentOverrides() }),
         signal: controller.signal,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Run failed");
       setLastStatus(data.status);
+      setLastFinal(data.finalStateId ?? null);
+      setLastError(data.error ?? null);
+      setLastScenarioId(activeScenario?.id ?? null);
       setSelectedRunId(data.runId ?? null);
       const list: RunEventDto[] = [...(data.events ?? [])];
       // Engine failures (no allowlisted edge, self-loop cap, …) come back as
@@ -182,7 +251,23 @@ export function RunsView({
 
   const stopRun = () => abortRef.current?.abort();
 
+  const lastScenario = scenarios.find((x) => x.id === lastScenarioId);
+  const expectationMet =
+    lastScenario && lastStatus
+      ? lastStatus === lastScenario.expect.status &&
+        (!lastScenario.expect.finalStateId || lastFinal === lastScenario.expect.finalStateId) &&
+        (!lastScenario.expect.errorIncludes ||
+          (lastError ?? "").includes(lastScenario.expect.errorIncludes))
+      : null;
+  // An END reached through an error / reject / timeout edge is a handled
+  // failure (e.g. "Escalation hold"), not a happy-path finish.
+  const endedViaErrorRoute = Boolean(lastSignal && ERROR_ROUTE.test(lastSignal));
+  const finalLabel = lastFinal ? (nodeById.get(lastFinal)?.data.label ?? lastFinal) : null;
+
   const selectRun = (run: RunDto) => {
+    setLastScenarioId(null);
+    setLastFinal(null);
+    setLastError(null);
     setSelectedRunId(run.id);
     setLastStatus(run.status);
     showEvents(run.events);
@@ -287,6 +372,86 @@ export function RunsView({
             )}
           </div>
 
+          <div className="space-y-2 border-b border-foreground/10 p-4" data-testid="run-scenario">
+            <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">Scenario</span>
+              <select
+                value={scenarioId}
+                onChange={(e) => setScenarioId(e.target.value)}
+                disabled={busy}
+                className="h-8 min-w-0 flex-1 rounded-md border border-foreground/10 bg-foreground/5 px-2 text-xs text-foreground"
+                data-testid="run-scenario-select"
+              >
+                <option value="default">Default: every state succeeds</option>
+                {scenarios.map((sc) => (
+                  <option key={sc.id} value={sc.id}>
+                    {sc.name}
+                  </option>
+                ))}
+                {branchStates.length > 0 && <option value="custom">Custom branches…</option>}
+              </select>
+            </label>
+            {activeScenario && (
+              <p className="text-xs text-muted-foreground">
+                {activeScenario.description}{" "}
+                <span className="text-foreground/70">
+                  Expect: {activeScenario.expect.status}
+                  {activeScenario.expect.finalStateId
+                    ? ` at “${nodeById.get(activeScenario.expect.finalStateId)?.data.label ?? activeScenario.expect.finalStateId}”`
+                    : ""}
+                </span>
+              </p>
+            )}
+            {scenarioId === "custom" && (
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {branchStates.map(({ node, signals }) => (
+                  <label key={node.id} className="flex min-w-0 items-center gap-2 text-[11px]">
+                    <span className="w-28 shrink-0 truncate text-muted-foreground" title={node.data.label}>
+                      {node.data.label}
+                    </span>
+                    <select
+                      value={custom[node.id] ?? ""}
+                      onChange={(e) => setCustom((c) => ({ ...c, [node.id]: e.target.value }))}
+                      className="h-7 min-w-0 flex-1 rounded border border-foreground/10 bg-foreground/5 px-1 font-mono text-[10px] text-foreground"
+                    >
+                      <option value="">default</option>
+                      {signals.map((sig) => (
+                        <option key={sig} value={sig}>
+                          {sig}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+                <p className="text-[10px] text-muted-foreground sm:col-span-2">
+                  Applies to each state&apos;s first visit; later visits use the default success signal.
+                </p>
+              </div>
+            )}
+            {lastStatus && !busy && (finalLabel || lastError) && (
+              <p
+                className={cn(
+                  "rounded-md px-2 py-1 text-xs",
+                  lastStatus !== "succeeded"
+                    ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                    : endedViaErrorRoute
+                      ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                )}
+                data-testid="run-outcome"
+              >
+                {lastStatus === "succeeded"
+                  ? `${endedViaErrorRoute ? "Routed to" : "Reached"} “${finalLabel}”${lastSignal ? ` via ${lastSignal}` : ""}`
+                  : `Failed: ${lastError}`}
+                {expectationMet != null && (
+                  <span className="ml-2 font-semibold">
+                    {expectationMet ? "✓ as expected" : "✗ unexpected outcome"}
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-3 gap-px border-b border-foreground/10 bg-foreground/5">
             {[
               { value: events.length, label: "events", color: "text-sky-500 dark:text-sky-400" },
@@ -312,7 +477,7 @@ export function RunsView({
                 {busy ? "Running…" : "The state path of the selected run appears here."}
               </p>
             ) : (
-              path.map((stateId, i) => {
+              path.map(({ stateId, times }, i) => {
                 const node = nodeById.get(stateId);
                 const type = (node?.data.stateType ?? "SCRIPT") as FSMStateType;
                 const colors = STATE_COLORS[type] ?? STATE_COLORS.SCRIPT;
@@ -329,6 +494,11 @@ export function RunsView({
                       )}
                     >
                       {node?.data.label ?? stateId}
+                      {times > 1 && (
+                        <span className="ml-1 rounded bg-black/10 px-1 text-[10px]" title="self-loop retries">
+                          ×{times}
+                        </span>
+                      )}
                     </span>
                   </Fragment>
                 );

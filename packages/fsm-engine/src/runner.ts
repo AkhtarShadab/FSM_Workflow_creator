@@ -6,7 +6,7 @@ import {
   type ChildExecutor,
   type SpawnPoolConfig,
 } from "./spawn-pool";
-import type { Emission } from "./signals";
+import { parseSignal, type Emission } from "./signals";
 
 export interface EngineState {
   id: string;
@@ -123,7 +123,7 @@ export async function runFsm(args: {
       events.push({
         stateId: state.id,
         kind: "SPAWN",
-        message: `spawned ${envelopes.length} children`,
+        message: `spawned ${envelopes.length} children (${summariseEnvelopes(envelopes)})`,
         payload: envelopes,
       });
     } else {
@@ -150,8 +150,8 @@ export async function runFsm(args: {
         stateId: state.id,
         kind: state.type,
         message: result.ok
-          ? `ok attempts=${result.attempts}`
-          : `fail ${result.reason}`,
+          ? `ok attempts=${result.attempts} → ${emittedSignal(emission)}`
+          : `fail ${result.reason}${result.error ? ` (${result.error})` : ""} → ${emittedSignal(emission)}`,
         payload: emission,
       });
 
@@ -227,4 +227,14 @@ export async function runFsm(args: {
     error: "max steps exceeded",
     aggregate,
   };
+}
+
+function emittedSignal(emission: Emission): string {
+  return parseSignal(emission).signal;
+}
+
+function summariseEnvelopes(envelopes: ChildEnvelope[]): string {
+  const counts = new Map<string, number>();
+  for (const e of envelopes) counts.set(e.status, (counts.get(e.status) ?? 0) + 1);
+  return [...counts].map(([k, v]) => `${v} ${k}`).join(", ") || "none";
 }

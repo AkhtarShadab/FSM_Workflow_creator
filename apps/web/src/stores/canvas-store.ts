@@ -136,6 +136,8 @@ interface CanvasStore {
   onConnect: (projectId: string, connection: Connection) => void;
 
   clearCanvas: (projectId: string) => void;
+  /** Replace a project's canvas wholesale (templates / import). */
+  loadCanvas: (projectId: string, data: CanvasData) => void;
 }
 
 function setCanvas(
@@ -379,6 +381,13 @@ export const useCanvasStore = create<CanvasStore>()(
             edges: [...canvas.edges, edge],
           });
         }),
+
+      loadCanvas: (projectId, data) =>
+        set((state) => ({
+          ...setCanvas(state, projectId, data),
+          selectedNodeId: null,
+          selectedEdgeId: null,
+        })),
 
       clearCanvas: (projectId) =>
         set((state) => ({

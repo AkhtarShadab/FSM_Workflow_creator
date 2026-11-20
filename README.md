@@ -20,6 +20,7 @@ detail → ship → test workflow.
 |-----|----------|
 | [InitialDraftPlan.md](InitialDraftPlan.md) | Original concept: FSM engine, signal transitions, token optimization, Magic UI canvas, roadmap |
 | [DETAILED_DESIGN_PLAN.md](DETAILED_DESIGN_PLAN.md) | Implementation-grade design: architecture decisions, monorepo layout, FSM DSL, signal grammar, gRPC/proto contracts, BYOK gateway, **testing strategy (Vitest + Playwright)**, **CI pipeline**, open questions, and de-risking next steps |
+| [docs/demo-water-inspection.md](docs/demo-water-inspection.md) | Ready-made demo: water network inspection → crew dispatch template, 9 run scenarios, click-by-click script |
 | [CODE_REVIEW_FIXES.md](CODE_REVIEW_FIXES.md) | Code review: bugs fixed (engine, SSRF guard, UI crashes) with regression tests, plus recommended follow-ups |
 | [FeatureShipping/](FeatureShipping/) | Per-feature design deltas (canvas, memory/code index, live executors, export, …). Workflow: **detail-feature** (high-end) → **ship-feature** (Composer/Grok) → **test-feature** (Composer/Grok) |
 
