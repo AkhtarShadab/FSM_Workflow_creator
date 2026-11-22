@@ -147,6 +147,11 @@ export function CredentialsView() {
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Provider</Label>
               <Select
+                items={{
+                  openai: "OpenAI",
+                  anthropic: "Anthropic",
+                  "openai-compatible": "OpenAI-compatible proxy",
+                }}
                 value={provider}
                 onValueChange={(v) => {
                   const p = v as typeof provider;

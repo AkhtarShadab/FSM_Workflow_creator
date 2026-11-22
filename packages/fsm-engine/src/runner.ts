@@ -1,7 +1,12 @@
 import { resolveTransition, type EngineEdge, type EngineMask } from "./resolver";
 import { runState, type Clock } from "./run-state";
-import { runSpawn, type ChildEnvelope, type SpawnPoolConfig } from "./spawn-pool";
-import type { Emission } from "./signals";
+import {
+  runSpawn,
+  type ChildEnvelope,
+  type ChildExecutor,
+  type SpawnPoolConfig,
+} from "./spawn-pool";
+import { parseSignal, type Emission } from "./signals";
 
 export interface EngineState {
   id: string;
@@ -48,9 +53,7 @@ export async function runFsm(args: {
   states: EngineState[];
   edges: EngineEdge[];
   executeState: StateExecutor;
-  executeChild?: SpawnPoolConfig extends never ? never : (
-    ctx: Parameters<Parameters<typeof runSpawn>[1]>[0]
-  ) => Promise<unknown>;
+  executeChild?: ChildExecutor;
   clock?: Clock;
   abortSignal?: AbortSignal;
   maxSteps?: number;
@@ -71,6 +74,15 @@ export async function runFsm(args: {
   const selfLoopCounts = new Map<string, number>();
 
   for (let step = 0; step < maxSteps; step++) {
+    if (args.abortSignal?.aborted) {
+      return {
+        status: "failed",
+        events,
+        finalStateId: currentId,
+        aggregate,
+        error: "Run aborted",
+      };
+    }
     const state = byId.get(currentId);
     if (!state) {
       return {
@@ -111,7 +123,7 @@ export async function runFsm(args: {
       events.push({
         stateId: state.id,
         kind: "SPAWN",
-        message: `spawned ${envelopes.length} children`,
+        message: `spawned ${envelopes.length} children (${summariseEnvelopes(envelopes)})`,
         payload: envelopes,
       });
     } else {
@@ -138,14 +150,21 @@ export async function runFsm(args: {
         stateId: state.id,
         kind: state.type,
         message: result.ok
-          ? `ok attempts=${result.attempts}`
-          : `fail ${result.reason}`,
+          ? `ok attempts=${result.attempts} → ${emittedSignal(emission)}`
+          : `fail ${result.reason}${result.error ? ` (${result.error})` : ""} → ${emittedSignal(emission)}`,
         payload: emission,
       });
 
-      if (!result.ok) {
-        // still try to follow error signal
+      if (!result.ok && result.reason === "aborted") {
+        return {
+          status: "failed",
+          events,
+          finalStateId: state.id,
+          aggregate,
+          error: "Run aborted",
+        };
       }
+      // Other failures follow the state's error signal via the allowlist.
     }
 
     const resolved = resolveTransition({
@@ -165,12 +184,20 @@ export async function runFsm(args: {
       };
     }
 
-    const matchedEdge = args.edges.find(
-      (e) =>
-        e.from === state.id &&
-        e.on === resolved.signal &&
-        e.to === resolved.to
-    );
+    const matchedEdge =
+      args.edges.find(
+        (e) =>
+          e.from === state.id &&
+          e.on === resolved.signal &&
+          e.to === resolved.to &&
+          e.kind !== "router"
+      ) ??
+      args.edges.find(
+        (e) =>
+          e.from === state.id &&
+          e.on === resolved.signal &&
+          e.to === resolved.to
+      );
     if (
       matchedEdge &&
       (matchedEdge.kind === "self-loop" || matchedEdge.from === matchedEdge.to)
@@ -200,4 +227,14 @@ export async function runFsm(args: {
     error: "max steps exceeded",
     aggregate,
   };
+}
+
+function emittedSignal(emission: Emission): string {
+  return parseSignal(emission).signal;
+}
+
+function summariseEnvelopes(envelopes: ChildEnvelope[]): string {
+  const counts = new Map<string, number>();
+  for (const e of envelopes) counts.set(e.status, (counts.get(e.status) ?? 0) + 1);
+  return [...counts].map(([k, v]) => `${v} ${k}`).join(", ") || "none";
 }

@@ -87,6 +87,27 @@ export function registerCustomState(
   };
 }
 
+/** Save (or overwrite by id) a reusable SYS_FUNC enable-map template (§3.6). */
+export function registerSysFuncTemplate(
+  registry: ProjectRegistry,
+  template: CustomSysFuncTemplate
+): ProjectRegistry {
+  if (!template.id.trim()) throw new Error("Empty template id");
+  if (!template.label.trim()) throw new Error("Empty template label");
+  const rest = registry.sysFuncTemplates.filter((t) => t.id !== template.id);
+  return { ...registry, sysFuncTemplates: [...rest, template] };
+}
+
+export function removeSysFuncTemplate(
+  registry: ProjectRegistry,
+  id: string
+): ProjectRegistry {
+  return {
+    ...registry,
+    sysFuncTemplates: registry.sysFuncTemplates.filter((t) => t.id !== id),
+  };
+}
+
 export function removeSignal(
   registry: ProjectRegistry,
   signal: string

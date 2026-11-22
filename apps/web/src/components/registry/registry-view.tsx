@@ -18,6 +18,7 @@ export function RegistryView() {
     addSkill,
     deleteSignal,
     deleteSkill,
+    deleteSysFuncTemplate,
   } = useRegistryStore();
   const [signal, setSignal] = useState("::MYAPP.DONE");
   const [skill, setSkill] = useState("");
@@ -44,7 +45,7 @@ export function RegistryView() {
   };
 
   return (
-    <div className="min-h-screen bg-background px-6 py-16">
+    <div className="relative min-h-screen bg-background px-4 py-16 sm:px-6">
       <div className="absolute top-4 right-4 z-20">
         <ModeToggle />
       </div>
@@ -149,6 +150,41 @@ export function RegistryView() {
               <span className="text-[10px] text-muted-foreground">None yet</span>
             )}
           </div>
+        </section>
+
+        <section className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">
+          <h2 className="mb-1 text-sm font-semibold">SYS_FUNC templates</h2>
+          <p className="mb-3 text-[10px] text-muted-foreground">
+            Reusable enable maps. Save one from a SYS_FUNC inspector
+            (“Save as template”), then apply it to any other SYS_FUNC.
+          </p>
+          <ul className="space-y-1.5" data-testid="registry-template-list">
+            {registry.sysFuncTemplates.map((t) => (
+              <li
+                key={t.id}
+                className="flex items-center justify-between gap-2 rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-xs"
+              >
+                <span className="min-w-0 truncate">
+                  <span className="font-semibold">{t.label}</span>{" "}
+                  <span className="text-muted-foreground">
+                    · {t.enabledStateIds.length} on · {t.disabledStateIds.length} off ·{" "}
+                    {t.rewire.length} rewire · {t.summaryStrategy}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Delete template ${t.label}`}
+                  onClick={() => deleteSysFuncTemplate(t.id)}
+                  className="shrink-0 text-muted-foreground hover:text-red-400"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+            {registry.sysFuncTemplates.length === 0 && (
+              <li className="text-[10px] text-muted-foreground">None yet</li>
+            )}
+          </ul>
         </section>
 
         <section className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">

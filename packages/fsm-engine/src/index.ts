@@ -8,6 +8,7 @@ export {
 export { isStateDisabledByMask } from "./mask";
 export {
   runState,
+  raceAbort,
   defaultClock,
   type RunStateSpec,
   type RunStateResult,

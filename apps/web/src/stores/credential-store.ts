@@ -56,7 +56,7 @@ export const useCredentialStore = create<CredentialStore>()(
       activeId: null,
 
       addCredential: (entry) => {
-        const id = `cred_${Date.now().toString(36)}`;
+        const id = `cred_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
         set((state) => ({
           credentials: [
             ...state.credentials,
